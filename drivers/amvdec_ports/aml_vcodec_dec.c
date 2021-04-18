@@ -3219,7 +3219,8 @@ static int vb2ops_vdec_buf_init(struct vb2_buffer *vb)
 			if (fb->task)
 				task_chain_clean(fb->task);
 
-			task_chain_init(&fb->task, ctx, fb, vb->index);
+			if (task_chain_init(&fb->task, ctx, fb, vb->index))
+				return -EFAULT;
 		}
 
 		v4l_dbg(ctx, V4L_DEBUG_CODEC_BUFMGR,
