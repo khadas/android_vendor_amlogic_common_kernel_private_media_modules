@@ -148,6 +148,9 @@ static DEFINE_SPINLOCK(vdec_spin_lock);
 #define RESET7_REGISTER_LEVEL 0x1127
 #define P_RESETCTRL_RESET5_LEVEL 0x15
 
+#define str(a) #a
+#define xstr(a) str(a)
+
 static int frameinfo_flag = 0;
 static int v4lvideo_add_di = 1;
 static int v4lvideo_add_ppmgr = 0;
@@ -4964,6 +4967,21 @@ static ssize_t dump_fps_show(struct class *class,
 	return pbuf - buf;
 }
 
+static ssize_t version_show(struct class *class,
+			struct class_attribute *attr, char *buf)
+{
+	char *pbuf = buf;
+#ifdef DECODER_VERSION
+	pbuf += sprintf(pbuf, "DECODER VERSION: " xstr(DECODER_VERSION) "\n");
+#endif
+
+#ifdef UCODE_VERSION
+		pbuf += sprintf(pbuf, "UCODE VERSION: " xstr(UCODE_VERSION) "\n");
+#endif
+
+	return pbuf - buf;
+}
+
 static char * parser_h264_profile(char *pbuf, struct vdec_s *vdec)
 {
 	switch (vdec->profile_idc) {
@@ -5254,6 +5272,7 @@ static CLASS_ATTR_RW(frame_check);
 static CLASS_ATTR_RO(dump_fps);
 static CLASS_ATTR_RO(profile_idc);
 static CLASS_ATTR_RO(level_idc);
+static CLASS_ATTR_RO(version);
 
 static struct attribute *vdec_class_attrs[] = {
 	&class_attr_amrisc_regs.attr,
@@ -5279,6 +5298,7 @@ static struct attribute *vdec_class_attrs[] = {
 	&class_attr_dump_fps.attr,
 	&class_attr_profile_idc.attr,
 	&class_attr_level_idc.attr,
+	&class_attr_version.attr,
 	NULL
 };
 
