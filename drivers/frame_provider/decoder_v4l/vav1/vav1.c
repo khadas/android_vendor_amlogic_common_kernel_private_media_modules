@@ -1364,7 +1364,10 @@ static int init_mv_buf_list(struct AV1HW_s *hw)
 			__func__, size);
 
 	if ((hw->is_used_v4l) && !IS_8K_SIZE(pic_width, pic_height)) {
-		size = 0x100000;
+		if (vdec_is_support_4k())
+			size = 0xb0000;
+		else
+			size = 0x30000;
 	}
 
 	if (hw->init_pic_w > 4096 && hw->init_pic_h > 2048)
