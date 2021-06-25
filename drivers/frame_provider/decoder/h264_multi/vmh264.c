@@ -5975,6 +5975,7 @@ static bool is_buffer_available(struct vdec_s *vdec)
 			(!have_free_buf_spec(vdec)))) {
 			unsigned long flags;
 			spin_lock_irqsave(&hw->bufspec_lock, flags);
+
 			for (i = 0; i < p_Dpb->used_size; i++) {
 				if (p_Dpb->fs[i]->pre_output)
 					frame_outside_count++;
