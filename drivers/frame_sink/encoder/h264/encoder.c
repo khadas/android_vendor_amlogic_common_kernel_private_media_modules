@@ -1345,7 +1345,12 @@ static s32 set_input_format(struct encode_wq_s *wq,
 		return -1;
 
 	picsize_x = ((wq->pic.encoder_width + 15) >> 4) << 4;
-	picsize_y = ((wq->pic.encoder_height + 15) >> 4) << 4;
+	if (request->scale_enable) {
+		picsize_y = ((wq->pic.encoder_height + 15) >> 4) << 4;
+	}
+	else {
+		picsize_y = wq->pic.encoder_height;
+	}
 	oformat = 0;
 
 	if ((request->type == LOCAL_BUFF)
@@ -3759,7 +3764,7 @@ Again:
 			cfg = &request->dma_cfg[i];
 			enc_pr(LOG_INFO, "request vaddr %p, paddr %p\n",
 				cfg->vaddr, cfg->paddr);
-			if (cfg->fd >= 0 && cfg->vaddr != NULL)
+			if (cfg->attach)
 				enc_dma_buf_unmap(cfg);
 		}
 	}
@@ -4600,7 +4605,7 @@ static s32 __init avc_mem_setup(struct reserved_mem *rmem)
 
 static int enc_dma_buf_map(struct enc_dma_cfg *cfg)
 {
-	long ret = -1;
+	int ret = -1;
 	int fd = -1;
 	struct dma_buf *dbuf = NULL;
 	struct dma_buf_attachment *d_att = NULL;
@@ -4638,29 +4643,12 @@ static int enc_dma_buf_map(struct enc_dma_cfg *cfg)
 		goto map_attach_err;
 	}
 
-	ret = dma_buf_begin_cpu_access(dbuf, dir);
-	if (ret != 0) {
-		enc_pr(LOG_ERROR, "failed to access dma buff\n");
-		goto access_err;
-	}
-
-	vaddr = dma_buf_vmap(dbuf);
-	if (vaddr == NULL) {
-		enc_pr(LOG_ERROR, "failed to vmap dma buf\n");
-		goto vmap_err;
-	}
 	cfg->dbuf = dbuf;
 	cfg->attach = d_att;
 	cfg->vaddr = vaddr;
 	cfg->sg = sg;
 
-	return ret;
-
-vmap_err:
-	dma_buf_end_cpu_access(dbuf, dir);
-
-access_err:
-	dma_buf_unmap_attachment(d_att, sg, dir);
+	return 0;
 
 map_attach_err:
 	dma_buf_detach(dbuf, d_att);
@@ -4699,12 +4687,12 @@ static void enc_dma_buf_unmap(struct enc_dma_cfg *cfg)
 	struct dma_buf *dbuf = NULL;
 	struct dma_buf_attachment *d_att = NULL;
 	struct sg_table *sg = NULL;
-	void *vaddr = NULL;
+	/*void *vaddr = NULL;*/
 	struct device *dev = NULL;
 	enum dma_data_direction dir;
 
 	if (cfg == NULL || (cfg->fd < 0) || cfg->dev == NULL
-			|| cfg->dbuf == NULL || cfg->vaddr == NULL
+			|| cfg->dbuf == NULL /*|| cfg->vaddr == NULL*/
 			|| cfg->attach == NULL || cfg->sg == NULL) {
 		enc_pr(LOG_ERROR, "Error input param\n");
 		return;
@@ -4714,20 +4702,15 @@ static void enc_dma_buf_unmap(struct enc_dma_cfg *cfg)
 	dev = cfg->dev;
 	dir = cfg->dir;
 	dbuf = cfg->dbuf;
-	vaddr = cfg->vaddr;
 	d_att = cfg->attach;
 	sg = cfg->sg;
-
-	dma_buf_vunmap(dbuf, vaddr);
-
-	dma_buf_end_cpu_access(dbuf, dir);
 
 	dma_buf_unmap_attachment(d_att, sg, dir);
 
 	dma_buf_detach(dbuf, d_att);
 
 	dma_buf_put(dbuf);
-	enc_pr(LOG_DEBUG, "enc_dma_buffer_unmap vaddr %p\n",(unsigned *)vaddr);
+	enc_pr(LOG_INFO, "enc_dma_buf_unmap fd %d\n",fd);
 }
 
 
