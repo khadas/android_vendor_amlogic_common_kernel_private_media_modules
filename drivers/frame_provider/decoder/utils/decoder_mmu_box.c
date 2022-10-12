@@ -28,11 +28,13 @@
 #include <linux/slab.h>
 #include <linux/amlogic/media/codec_mm/codec_mm_scatter.h>
 #include <linux/platform_device.h>
+
 struct decoder_mmu_box {
 	int max_sc_num;
 	const char *name;
 	int channel_id;
 	int tvp_mode;
+	int box_ref_cnt;
 	struct mutex mutex;
 	struct list_head list;
 	struct codec_mm_scatter *sc_list[1];
@@ -73,6 +75,51 @@ static int decoder_mmu_box_mgr_del_box(struct decoder_mmu_box *box)
 	mutex_unlock(&mgr->mutex);
 	return 0;
 }
+
+bool decoder_mmu_box_valide_check(void *box)
+{
+	struct decoder_mmu_box_mgr *mgr = get_decoder_mmu_box_mgr();
+	struct decoder_mmu_box *mmu_box = NULL;
+	bool is_valide = false;
+
+	mutex_lock(&mgr->mutex);
+	list_for_each_entry(mmu_box, &mgr->box_list, list) {
+		if (mmu_box && mmu_box == box) {
+			is_valide = true;
+			break;
+		}
+	}
+	mutex_unlock(&mgr->mutex);
+
+	return is_valide;
+}
+EXPORT_SYMBOL(decoder_mmu_box_valide_check);
+
+void decoder_mmu_try_to_release_box(void *handle)
+{
+	struct decoder_mmu_box *box = handle;
+	bool is_keep = false;
+	int i;
+
+	if (!box || box->box_ref_cnt)
+		return;
+
+	mutex_lock(&box->mutex);
+	for (i = 0; i < box->max_sc_num; i++) {
+		if (box->sc_list[i]) {
+			is_keep = true;
+			break;
+		}
+	}
+	mutex_unlock(&box->mutex);
+
+	if (!is_keep) {
+		decoder_mmu_box_mgr_del_box(box);
+		codec_mm_scatter_mgt_delay_free_swith(0, 0, 0, box->tvp_mode);
+		kfree(box);
+	}
+}
+EXPORT_SYMBOL(decoder_mmu_try_to_release_box);
 
 int decoder_mmu_box_sc_check(void *handle, int is_tvp)
 {
@@ -115,7 +162,7 @@ void *decoder_mmu_box_alloc_box(const char *name,
 	mutex_init(&box->mutex);
 	INIT_LIST_HEAD(&box->list);
 	decoder_mmu_box_mgr_add_box(box);
-	codec_mm_scatter_mgt_delay_free_switch(1, 2000,
+	codec_mm_scatter_mgt_delay_free_swith(1, 2000,
 		min_size_M, box->tvp_mode);
 	return (void *)box;
 }
@@ -142,6 +189,7 @@ int decoder_mmu_box_alloc_idx(
 			ret = codec_mm_scatter_alloc_want_pages(sc,
 				num_pages);
 		else {
+			box->box_ref_cnt--;
 			codec_mm_scatter_dec_owner_user(sc, 0);
 			box->sc_list[idx] = NULL;
 			sc = NULL;
@@ -158,6 +206,7 @@ int decoder_mmu_box_alloc_idx(
 			return -1;
 		}
 		box->sc_list[idx] = sc;
+		box->box_ref_cnt++;
 	}
 
 	for (i = 0; i < num_pages; i++)
@@ -203,15 +252,17 @@ int decoder_mmu_box_free_idx(void *handle, int idx)
 			box ? (box->max_sc_num - 1) : 0);
 		return -1;
 	}
-
 	mutex_lock(&box->mutex);
 	sc = box->sc_list[idx];
 	if (sc && sc->page_cnt > 0) {
 		codec_mm_scatter_dec_owner_user(sc, 0);
 		box->sc_list[idx] = NULL;
+		box->box_ref_cnt--;
 	}
-
 	mutex_unlock(&box->mutex);
+
+	if (sc && box->box_ref_cnt == 0)
+		codec_mm_scatter_mgt_delay_free_swith(0, 0, 0, box->tvp_mode);
 
 	return 0;
 }
@@ -227,24 +278,18 @@ int decoder_mmu_box_free(void *handle)
 		pr_err("can't free box of NULL box!\n");
 		return -1;
 	}
-
 	mutex_lock(&box->mutex);
 	for (i = 0; i < box->max_sc_num; i++) {
 		sc = box->sc_list[i];
 		if (sc) {
 			codec_mm_scatter_dec_owner_user(sc, 0);
 			box->sc_list[i] = NULL;
-
 		}
 	}
-
-	codec_mm_scatter_mgt_delay_free_switch(0, 0, 0, box->tvp_mode);
-
 	mutex_unlock(&box->mutex);
-
 	decoder_mmu_box_mgr_del_box(box);
+	codec_mm_scatter_mgt_delay_free_swith(0, 0, 0, box->tvp_mode);
 	kfree(box);
-
 	return 0;
 }
 EXPORT_SYMBOL(decoder_mmu_box_free);
@@ -366,18 +411,16 @@ box_dump_show(struct class *class,
 	return ret;
 }
 
-static CLASS_ATTR_RO(box_dump);
 
-static struct attribute *decoder_mmu_box_class_attrs[] = {
-	&class_attr_box_dump.attr,
-	NULL
+
+static struct class_attribute decoder_mmu_box_class_attrs[] = {
+	__ATTR_RO(box_dump),
+	__ATTR_NULL
 };
-
-ATTRIBUTE_GROUPS(decoder_mmu_box_class);
 
 static struct class decoder_mmu_box_class = {
 	.name = "decoder_mmu_box",
-	.class_groups = decoder_mmu_box_class_groups,
+	.class_attrs = decoder_mmu_box_class_attrs,
 };
 
 int decoder_mmu_box_init(void)

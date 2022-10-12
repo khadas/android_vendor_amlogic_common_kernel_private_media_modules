@@ -75,6 +75,30 @@
 #define SEC_BUF_BUSY_SIZE 4
 #define SEC_BUF_COUNT     (SEC_BUF_GRP_COUNT*8)
 
+enum aml_dmx_id_t {
+	AM_DMX_0 = 0,
+	AM_DMX_1,
+	AM_DMX_2,
+	AM_DMX_MAX,
+};
+
+enum aml_ts_source_t {
+	AM_TS_SRC_TS0,
+	AM_TS_SRC_TS1,
+	AM_TS_SRC_TS2,
+	AM_TS_SRC_TS3,
+
+	AM_TS_SRC_S_TS0,
+	AM_TS_SRC_S_TS1,
+	AM_TS_SRC_S_TS2,
+	AM_TS_SRC_S_TS3,
+
+	AM_TS_SRC_HIU,
+	AM_TS_SRC_HIU1,
+	AM_TS_SRC_DMX0,
+	AM_TS_SRC_DMX1,
+	AM_TS_SRC_DMX2
+};
 
 struct aml_sec_buf {
 	unsigned long        addr;

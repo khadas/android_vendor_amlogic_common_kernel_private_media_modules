@@ -43,8 +43,8 @@
 #include "../utils/decoder_bmmu_box.h"
 #include "../utils/firmware.h"
 #include "../../../common/chips/decoder_cpu_ver_info.h"
-//#include <linux/amlogic/tee.h>
-#include <uapi/linux/tee.h>
+#include "../utils/secprot.h"
+
 
 #define DRIVER_NAME "amvdec_avs"
 #define MODULE_NAME "amvdec_avs"
@@ -161,6 +161,7 @@ static u32 canvas_base = 128;
 #else
 	int	canvas_num = 3;
 #endif
+
 
 static struct vframe_s vfpool[VF_POOL_SIZE];
 /*static struct vframe_s vfpool2[VF_POOL_SIZE];*/
@@ -412,7 +413,6 @@ static void UserDataHandler(void)
 	}
 }
 
-
 #ifdef HANDLE_AVS_IRQ
 static irqreturn_t vavs_isr(int irq, void *dev_id)
 #else
@@ -654,7 +654,6 @@ static void vavs_isr(void)
 				decoder_bmmu_box_get_mem_handle(
 					mm_blk_handle,
 					buffer_index);
-
 			kfifo_put(&display_q,
 					  (const struct vframe_s *)vf);
 			ATRACE_COUNTER(MODULE_NAME, vf->pts);
@@ -741,6 +740,7 @@ static void vavs_isr(void)
 				decoder_bmmu_box_get_mem_handle(
 					mm_blk_handle,
 					buffer_index);
+
 			decoder_do_frame_check(NULL, vf);
 			kfifo_put(&display_q,
 					  (const struct vframe_s *)vf);
@@ -945,35 +945,35 @@ static int vavs_canvas_init(void)
 		else
 			endian = 0;
 #ifdef NV21
-			config_cav_lut_ex(canvas_base + canvas_num * i + 0,
+			canvas_config_ex(canvas_base + canvas_num * i + 0,
 					buf_start,
 					canvas_width, canvas_height,
 					CANVAS_ADDR_NOWRAP,
-					vdec->canvas_mode, endian, VDEC_1);
-			config_cav_lut_ex(canvas_base + canvas_num * i + 1,
+					vdec->canvas_mode, endian);
+			canvas_config_ex(canvas_base + canvas_num * i + 1,
 					buf_start +
 					decbuf_y_size, canvas_width,
 					canvas_height / 2,
 					CANVAS_ADDR_NOWRAP,
-					vdec->canvas_mode, endian, VDEC_1);
+					vdec->canvas_mode, endian);
 #else
-			config_cav_lut_ex(canvas_num * i + 0,
+			canvas_config_ex(canvas_num * i + 0,
 					buf_start,
 					canvas_width, canvas_height,
 					CANVAS_ADDR_NOWRAP,
-					vdec->canvas_mode, endian, VDEC_1);
-			config_cav_lut_ex(canvas_num * i + 1,
+					vdec->canvas_mode, endian);
+			canvas_config_ex(canvas_num * i + 1,
 					buf_start +
 					decbuf_y_size, canvas_width / 2,
 					canvas_height / 2,
 					CANVAS_ADDR_NOWRAP,
-					vdec->canvas_mode, endian, VDEC_1);
-			config_cav_lut_ex(canvas_num * i + 2,
+					vdec->canvas_mode, endian);
+			canvas_config_ex(canvas_num * i + 2,
 					buf_start +
 					decbuf_y_size + decbuf_uv_size,
 					canvas_width / 2, canvas_height / 2,
 					CANVAS_ADDR_NOWRAP,
-					vdec->canvas_mode, endian, VDEC_1);
+					vdec->canvas_mode, endian);
 #endif
 			if (debug_flag & AVS_DEBUG_PRINT) {
 				pr_info("canvas config %d, addr %p\n", i,
@@ -1353,8 +1353,10 @@ static void avs_set_clk(struct work_struct *work)
 		}
 }
 
-static void vavs_put_timer_func(struct timer_list *timer)
+static void vavs_put_timer_func(unsigned long arg)
 {
+	struct timer_list *timer = (struct timer_list *)arg;
+
 #ifndef HANDLE_AVS_IRQ
 	vavs_isr();
 #endif
@@ -1571,6 +1573,7 @@ static s32 vavs_init(void)
 		return -ENOMEM;
 
 	pr_info("vavs_init\n");
+	init_timer(&recycle_timer);
 
 	stat |= STAT_TIMER_INIT;
 
@@ -1608,7 +1611,7 @@ static s32 vavs_init(void)
 		amvdec_disable();
 		vfree(buf);
 		pr_err("AVS: the %s fw loading failed, err: %x\n",
-			tee_enabled() ? "TEE" : "local", ret);
+			vdec_tee_enabled() ? "TEE" : "local", ret);
 		return -EBUSY;
 	}
 
@@ -1654,8 +1657,10 @@ static s32 vavs_init(void)
 
 	stat |= STAT_VF_HOOK;
 
-	timer_setup(&recycle_timer, vavs_put_timer_func, 0);
+	recycle_timer.data = (ulong)(&recycle_timer);
+	recycle_timer.function = vavs_put_timer_func;
 	recycle_timer.expires = jiffies + PUT_INTERVAL;
+
 	add_timer(&recycle_timer);
 
 	stat |= STAT_TIMER_ARM;

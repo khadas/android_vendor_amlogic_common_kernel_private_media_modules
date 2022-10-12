@@ -40,15 +40,13 @@
 #include <linux/of_reserved_mem.h>
 #include <linux/of_address.h>
 #include <linux/amlogic/media/codec_mm/codec_mm.h>
-
-#include <linux/amlogic/media/registers/cpu_version.h>
+#include <linux/amlogic/cpu_version.h>
 #include <linux/version.h>
 #include "../../../frame_provider/decoder/utils/vdec_power_ctrl.h"
 #include <linux/amlogic/media/utils/vdec_reg.h>
 #include <linux/amlogic/power_ctrl.h>
 #include <dt-bindings/power/sc2-pd.h>
-#include <linux/amlogic/power_domain.h>
-#include <linux/amlogic/power_ctrl.h>
+#include <linux/amlogic/pwr_ctrl.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,1)
 #include <linux/sched/signal.h>
 #endif
@@ -421,20 +419,16 @@ static s32 vpu_open(struct inode *inode, struct file *filp)
 	bool alloc_buffer = false;
 	s32 r = 0;
 
-	enc_pr(LOG_DEBUG, "[+] %s, open_count=%d\n", __func__,
-			s_vpu_drv_context.open_count);
-	enc_pr(LOG_DEBUG, "vpu_open, calling process: %d:%s\n", current->pid, current->comm);
+	enc_pr(LOG_DEBUG, "[+] %s\n", __func__);
 	spin_lock(&s_vpu_lock);
 	s_vpu_drv_context.open_count++;
 	if (s_vpu_drv_context.open_count == 1) {
 		alloc_buffer = true;
 	} else {
 		r = -EBUSY;
-		enc_pr(LOG_ERROR, "vpu_open, device is busy, s_vpu_drv_context.open_count=%d\n",
-				s_vpu_drv_context.open_count);
 		s_vpu_drv_context.open_count--;
 		spin_unlock(&s_vpu_lock);
-		return r;
+		goto Err;
 	}
 	filp->private_data = (void *)(&s_vpu_drv_context);
 	spin_unlock(&s_vpu_lock);
@@ -503,6 +497,7 @@ static s32 vpu_open(struct inode *inode, struct file *filp)
 			s_vpu_irq_requested = true;
 		}
 		if (get_cpu_type() >= MESON_CPU_MAJOR_ID_SC2) {
+		
 		} else
 		    amports_switch_gate("vdec", 1);
 
@@ -510,7 +505,7 @@ static s32 vpu_open(struct inode *inode, struct file *filp)
 
 		if (get_cpu_type() >= MESON_CPU_MAJOR_ID_SC2) {
 			//vpu_clk_config(1);
-			pwr_ctrl_psci_smc(PDID_SC2_DOS_WAVE, PWR_ON);
+			pwr_ctrl_psci_smc(PDID_DOS_WAVE, PWR_ON);
 		} else {
 			WRITE_AOREG(AO_RTI_GEN_PWR_SLEEP0,
 				READ_AOREG(AO_RTI_GEN_PWR_SLEEP0) &
@@ -567,12 +562,9 @@ static s32 vpu_open(struct inode *inode, struct file *filp)
 	dma_cfg[0].fd = -1;
 	dma_cfg[1].fd = -1;
 	dma_cfg[2].fd = -1;
-
-	if (r != 0) {
-		enc_pr(LOG_DEBUG, "vpu_open, error handling, r=%d, s_vpu_drv_context.open_count=%d\n",
-				r, s_vpu_drv_context.open_count);
+Err:
+	if (r != 0)
 		s_vpu_drv_context.open_count--;
-	}
 	enc_pr(LOG_DEBUG, "[-] %s, ret: %d\n", __func__, r);
 	return r;
 }
@@ -1515,27 +1507,14 @@ static s32 vpu_release(struct inode *inode, struct file *filp)
 	s32 ret = 0;
 	ulong flags;
 
-	enc_pr(LOG_DEBUG, "vpu_release, calling process: %d:%s\n", current->pid, current->comm);
+	enc_pr(LOG_DEBUG, "vpu_release\n");
 	ret = down_interruptible(&s_vpu_sem);
-	enc_pr(LOG_DEBUG, "vpu_release, ret = %d\n", ret);
-
-	if (s_vpu_drv_context.open_count <= 0) {
-		enc_pr(LOG_DEBUG, "vpu_release, open_count=%d, already released or even not inited\n",
-			s_vpu_drv_context.open_count);
-		s_vpu_drv_context.open_count = 0;
-		goto exit_release;
-	}
-
 	if (ret == 0) {
 		vpu_free_buffers(filp);
 		vpu_free_instances(filp);
-
-		enc_pr(LOG_DEBUG, "vpu_release, decrease open_count from %d\n",
-				s_vpu_drv_context.open_count);
-
 		s_vpu_drv_context.open_count--;
 		if (s_vpu_drv_context.open_count == 0) {
-			enc_pr(LOG_DEBUG,
+			enc_pr(LOG_INFO,
 			       "vpu_release: s_interrupt_flag(%d), reason(0x%08lx)\n",
 			       s_interrupt_flag, s_vpu_drv_context.interrupt_reason);
 			s_vpu_drv_context.interrupt_reason = 0;
@@ -1571,7 +1550,7 @@ static s32 vpu_release(struct inode *inode, struct file *filp)
 
 			if (get_cpu_type() >= MESON_CPU_MAJOR_ID_SC2) {
 				//vpu_clk_config(0);
-				pwr_ctrl_psci_smc(PDID_SC2_DOS_WAVE, PWR_OFF);
+				pwr_ctrl_psci_smc(PDID_DOS_WAVE, PWR_OFF);
 			} else {
 				WRITE_AOREG(AO_RTI_GEN_PWR_ISO0,
 					READ_AOREG(AO_RTI_GEN_PWR_ISO0) |
@@ -1602,7 +1581,6 @@ static s32 vpu_release(struct inode *inode, struct file *filp)
 			    amports_switch_gate("vdec", 0);
 		}
 	}
-exit_release:
 	up(&s_vpu_sem);
 	return 0;
 }
@@ -2005,7 +1983,7 @@ static s32 vpu_probe(struct platform_device *pdev)
 	struct resource res;
 	struct device_node *np, *child;
 
-	enc_pr(LOG_DEBUG, "vpu_probe, clock_a: %d, clock_b: %d, clock_c: %d\n",
+	enc_pr(LOG_DEBUG, "vpu_probe fuck, clock_a: %d, clock_b: %d, clock_c: %d\n",
 		wave_clocka, wave_clockb, wave_clockc);
 
 	s_vpu_major = 0;

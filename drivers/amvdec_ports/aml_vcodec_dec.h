@@ -20,14 +20,11 @@
 #ifndef _AML_VCODEC_DEC_H_
 #define _AML_VCODEC_DEC_H_
 
-#include <linux/kref.h>
-#include <linux/scatterlist.h>
 #include <media/videobuf2-core.h>
 #include <media/videobuf2-v4l2.h>
 #include <linux/amlogic/media/codec_mm/codec_mm.h>
 #include <linux/amlogic/media/video_sink/v4lvideo_ext.h>
 #include "aml_vcodec_util.h"
-#include "aml_task_chain.h"
 
 #define VCODEC_CAPABILITY_4K_DISABLED	0x10
 #define VCODEC_DEC_4K_CODED_WIDTH	4096U
@@ -41,25 +38,15 @@
 #define VDEC_GATHER_MEMORY_TYPE		0
 #define VDEC_SCATTER_MEMORY_TYPE	1
 
-#define META_DATA_SIZE			(256)
-#define MD_BUF_SIZE			(1024)
-#define COMP_BUF_SIZE			(8196)
-#define SEI_BUF_SIZE			(2 * 12 * 1024)
-#define SEI_TYPE	(1)
-#define DV_TYPE		(2)
-
-
-/*
- * struct vdec_v4l2_buffer - decoder frame buffer
+/**
+ * struct vdec_fb  - decoder frame buffer
  * @mem_type	: gather or scatter memory.
  * @num_planes	: used number of the plane
  * @mem[4]	: array mem for used planes,
  *		  mem[0]: Y, mem[1]: C/U, mem[2]: V
  * @vf_fd	: the file handle of video frame
+ * @vf_handle	: video frame handle
  * @status      : frame buffer status (vdec_fb_status)
- * @buf_idx	: the index from vb2 index.
- * @vframe	: store the vframe that get from caller.
- * @task	: the context of task chain manager.
  */
 
 struct vdec_v4l2_buffer {
@@ -69,12 +56,11 @@ struct vdec_v4l2_buffer {
 		struct	aml_vcodec_mem mem[4];
 		u32	vf_fd;
 	} m;
+	ulong	vf_handle;
 	u32	status;
 	u32	buf_idx;
-	void	*vframe;
-
-	struct task_chain_s *task;
 };
+
 
 /**
  * struct aml_video_dec_buf - Private data related to each VB2 buffer.
@@ -82,6 +68,10 @@ struct vdec_v4l2_buffer {
  * @list:	link list
  * @used:	Capture buffer contain decoded frame data and keep in
  *			codec data structure
+ * @ready_to_display:	Capture buffer not display yet
+ * @queued_in_vb2:	Capture buffer is queue in vb2
+ * @queued_in_v4l2:	Capture buffer is in v4l2 driver, but not in vb2
+ *			queue yet
  * @lastframe:		Intput buffer is last buffer - EOS
  * @error:		An unrecoverable error occurs on this buffer.
  * @frame_buffer:	Decode status, and buffer information of Capture buffer
@@ -97,21 +87,12 @@ struct aml_video_dec_buf {
 	struct codec_mm_s *mem[2];
 	char mem_onwer[32];
 	bool used;
+	bool ready_to_display;
 	bool que_in_m2m;
+	bool queued_in_vb2;
+	bool queued_in_v4l2;
 	bool lastframe;
 	bool error;
-
-	/* internal compressed buffer */
-	unsigned int internal_index;
-
-	ulong vpp_buf_handle;
-	ulong ge2d_buf_handle;
-
-	/*4 bytes data for data len*/
-	char meta_data[META_DATA_SIZE + 4];
-
-	struct sg_table *out_sgt;
-	struct sg_table *cap_sgt;
 };
 
 extern const struct v4l2_ioctl_ops aml_vdec_ioctl_ops;
@@ -130,19 +111,16 @@ int aml_vcodec_dec_queue_init(void *priv, struct vb2_queue *src_vq,
 void aml_vcodec_dec_set_default_params(struct aml_vcodec_ctx *ctx);
 void aml_vcodec_dec_release(struct aml_vcodec_ctx *ctx);
 int aml_vcodec_dec_ctrls_setup(struct aml_vcodec_ctx *ctx);
+void vdec_device_vf_run(struct aml_vcodec_ctx *ctx);
+void try_to_capture(struct aml_vcodec_ctx *ctx);
+void aml_thread_notify(struct aml_vcodec_ctx *ctx,
+	enum aml_thread_type type);
+int aml_thread_start(struct aml_vcodec_ctx *ctx, aml_thread_func func,
+	enum aml_thread_type type, const char *thread_name);
+void aml_thread_stop(struct aml_vcodec_ctx *ctx);
 void wait_vcodec_ending(struct aml_vcodec_ctx *ctx);
 void vdec_frame_buffer_release(void *data);
 void aml_vdec_dispatch_event(struct aml_vcodec_ctx *ctx, u32 changes);
 void* v4l_get_vf_handle(int fd);
-void aml_v4l_ctx_release(struct kref *kref);
-void dmabuff_recycle_worker(struct work_struct *work);
-void aml_buffer_status(struct aml_vcodec_ctx *ctx);
-void aml_vdec_basic_information(struct aml_vcodec_ctx *ctx);
-
-void aml_alloc_buffer(struct aml_vcodec_ctx *ctx, int flag);
-void aml_free_buffer(struct aml_vcodec_ctx *ctx, int flag);
-void aml_free_one_sei_buffer(struct aml_vcodec_ctx *ctx, char **addr, int *size, int idx);
-void aml_bind_sei_buffer(struct aml_vcodec_ctx *v4l, char **addr, int *size, int *idx);
-void aml_bind_dv_buffer(struct aml_vcodec_ctx *v4l, char **comp_buf, char **md_buf);
 
 #endif /* _AML_VCODEC_DEC_H_ */

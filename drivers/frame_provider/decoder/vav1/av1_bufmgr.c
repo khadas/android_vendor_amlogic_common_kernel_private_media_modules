@@ -530,23 +530,16 @@ static void reset_frame_buffers(AV1Decoder *const pbi);
 
 void av1_bufmgr_ctx_reset(AV1Decoder *pbi, BufferPool *const pool, AV1_COMMON *cm)
 {
-	u32 save_w, save_h;
-
 	if (!pbi || !pool || !cm)
 		return;
 
 	reset_frame_buffers(pbi);
 	memset(pbi, 0, sizeof(*pbi));
-	/*save w,h for resolution change after seek */
-	save_w = cm->width;
-	save_h = cm->height;
 	memset(cm, 0, sizeof(*cm));
 
 	cm->current_frame.frame_number	= 0;
 	cm->seq_params.bit_depth	= AOM_BITS_8;
 	cm->error.setjmp = 0;
-	cm->width = save_w;
-	cm->height = save_h;
 
 	pbi->bufmgr_proc_count		= 0;
 	pbi->need_resync		= 1;
@@ -590,17 +583,6 @@ static void decrease_ref_count(AV1Decoder *pbi, RefCntBuffer *const buf,
       buf->raw_frame_buffer.priv = NULL;
     }
   }
-}
-
-void clear_frame_buf_ref_count(AV1Decoder *pbi)
-{
-	int i;
-
-	for (i = 0; i < pbi->num_output_frames; i++) {
-		decrease_ref_count(pbi, pbi->output_frames[i],
-			pbi->common->buffer_pool);
-	}
-	pbi->num_output_frames = 0;
 }
 
 static void swap_frame_buffers(AV1Decoder *pbi, int frame_decoded) {
@@ -976,10 +958,9 @@ int av1_alloc_context_buffers(AV1_COMMON *cm, int width, int height) {
 
 #ifdef ORI_CODE
 fail:
-#endif
   // clear the mi_* values to force a realloc on resync
   av1_set_mb_mi(cm, 0, 0);
-#ifdef ORI_CODE
+
   av1_free_context_buffers(cm);
 #endif
   return 1;
@@ -2035,7 +2016,6 @@ int av1_decode_frame_headers_and_setup(AV1Decoder *pbi, int trailing_bits_presen
       // See if this frame can be used as show_existing_frame in future
       cm->showable_frame = params->p.showable_frame;//aom_rb_read_bit(rb);
     }
-    cm->cur_frame->show_frame = cm->show_frame;
     cm->cur_frame->showable_frame = cm->showable_frame;
     cm->error_resilient_mode =
         frame_is_sframe(cm) ||
@@ -2946,14 +2926,6 @@ int aom_decode_frame_from_obus(AV1Decoder *pbi, union param_u *params, int obu_t
           // TODO(wtc): Verify that the frame_header_obu is identical to the
           // original frame_header_obu. For now just skip frame_header_size
           // bytes in the bit buffer.
-          if (frame_header_size > payload_size) {
-            cm->error.error_code = AOM_CODEC_CORRUPT_FRAME;
-            return -1;
-          }
-          assert(rb.bit_offset == 0);
-#ifdef ORI_CODE
-          rb.bit_offset = 8 * frame_header_size;
-#endif
         }
 
         decoded_payload_size = frame_header_size;
@@ -3012,6 +2984,7 @@ int get_buffer_index(AV1Decoder *pbi, RefCntBuffer *buffer)
 			}
 		}
 	}
+
 	return i;
 }
 

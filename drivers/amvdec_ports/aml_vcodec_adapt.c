@@ -56,7 +56,6 @@
 //#define DATA_DEBUG
 
 extern int dump_output_frame;
-extern u32 dump_output_start_position;
 extern void aml_recycle_dma_buffers(struct aml_vcodec_ctx *ctx, u32 handle);
 static int def_4k_vstreambuf_sizeM =
 	(DEFAULT_VIDEO_BUFFER_SIZE_4K >> 20);
@@ -253,17 +252,7 @@ struct stream_buf_s *pbuf, int release_num)
 	case 4: {
 		if ((port->type & PORT_TYPE_FRAME) == 0)
 			esparser_release(pbuf);
-		if (vdec->slave)
-			slave = vdec->slave;
-		vdec_release(vdec);
-
-		if (slave)
-			vdec_release(slave);
-		vdec = NULL;
-		if ((port->type & PORT_TYPE_FRAME) == 0)
-			stbuf_release(pbuf);
 	}
-	break;
 
 	case 3: {
 		if (vdec->slave)
@@ -273,16 +262,12 @@ struct stream_buf_s *pbuf, int release_num)
 		if (slave)
 			vdec_release(slave);
 		vdec = NULL;
-		if ((port->type & PORT_TYPE_FRAME) == 0)
-			stbuf_release(pbuf);
 	}
-	break;
 
 	case 2: {
 		if ((port->type & PORT_TYPE_FRAME) == 0)
 			stbuf_release(pbuf);
 	}
-	break;
 
 	case 1:
 		;
@@ -306,13 +291,13 @@ static int video_component_init(struct stream_port_s *port,
 		|| port->vformat == VFORMAT_H264_4K2K) {
 		port->is_4k = true;
 		if (get_cpu_type() >= MESON_CPU_MAJOR_ID_TXLX
-				&& (port->vformat == VFORMAT_H264))
+				&& port->vformat == VFORMAT_H264)
 			vdec_poweron(VDEC_HEVC);
 	} else
 		port->is_4k = false;
 
 	if (port->type & PORT_TYPE_FRAME) {
-		ret = vdec_init(vdec, port->is_4k, true);
+		ret = vdec_init(vdec, port->is_4k);
 		if (ret < 0) {
 			v4l_dbg(ada_ctx->ctx, V4L_DEBUG_CODEC_ERROR, "failed\n");
 			video_component_release(port, pbuf, 2);
@@ -340,7 +325,7 @@ static int video_component_init(struct stream_port_s *port,
 	}
 
 	/* todo: set path based on port flag */
-	ret = vdec_init(vdec, port->is_4k, true);
+	ret = vdec_init(vdec, port->is_4k);
 	if (ret < 0) {
 		v4l_dbg(ada_ctx->ctx, V4L_DEBUG_CODEC_ERROR, "vdec_init failed\n");
 		video_component_release(port, pbuf, 2);
@@ -348,7 +333,7 @@ static int video_component_init(struct stream_port_s *port,
 	}
 
 	if (vdec_dual(vdec)) {
-		ret = vdec_init(vdec->slave, port->is_4k, true);
+		ret = vdec_init(vdec->slave, port->is_4k);
 		if (ret < 0) {
 			v4l_dbg(ada_ctx->ctx, V4L_DEBUG_CODEC_ERROR, "vdec_init failed\n");
 			video_component_release(port, pbuf, 2);
@@ -377,8 +362,8 @@ static int vdec_ports_release(struct stream_port_s *port)
 	struct stream_buf_s *pvbuf = &bufs[BUF_TYPE_VIDEO];
 
 	if (has_hevc_vdec()) {
-		if (port->vformat == VFORMAT_HEVC ||
-			port->vformat == VFORMAT_VP9)
+		if (port->vformat == VFORMAT_HEVC
+			|| port->vformat == VFORMAT_VP9)
 			pvbuf = &bufs[BUF_TYPE_HEVC];
 	}
 
@@ -406,6 +391,7 @@ static void set_vdec_properity(struct vdec_s *vdec,
 	vdec->port	= &ada_ctx->port;
 	vdec->format	= ada_ctx->video_type;
 	vdec->sys_info_store = ada_ctx->dec_prop;
+	vdec->vf_receiver_name = ada_ctx->recv_name;
 
 	/* binding v4l2 ctx to vdec. */
 	vdec->private = ada_ctx->ctx;
@@ -439,6 +425,7 @@ static void set_vdec_properity(struct vdec_s *vdec,
 		vdec->frame_base_video_path = aml_set_vfm_path;
 
 	vdec->port->flag = vdec->port_flag;
+	ada_ctx->vfm_path = vdec->frame_base_video_path;
 
 	vdec->config_len = ada_ctx->config.length >
 		PAGE_SIZE ? PAGE_SIZE : ada_ctx->config.length;
@@ -458,7 +445,6 @@ static int vdec_ports_init(struct aml_vdec_adapt *ada_ctx)
 	if (IS_ERR_OR_NULL(vdec))
 		return -1;
 
-	vdec->disable_vfm = true;
 	set_vdec_properity(vdec, ada_ctx);
 
 	/* init hw and gate*/
@@ -475,8 +461,8 @@ static int vdec_ports_init(struct aml_vdec_adapt *ada_ctx)
 		&& (vdec->port_flag & PORT_FLAG_VFORMAT)) {
 		vdec->port->is_4k = false;
 		if (has_hevc_vdec()) {
-			if (vdec->port->vformat == VFORMAT_HEVC ||
-				vdec->port->vformat == VFORMAT_VP9)
+			if (vdec->port->vformat == VFORMAT_HEVC
+				|| vdec->port->vformat == VFORMAT_VP9)
 				pvbuf = &bufs[BUF_TYPE_HEVC];
 		}
 
@@ -540,11 +526,9 @@ void dump(const char* path, const char *data, unsigned int size)
 	if (!IS_ERR(fp)) {
 		kernel_write(fp, data, size, 0);
 		filp_close(fp, NULL);
-	} else {
-		pr_info("Dump ES fail, should check RW permission, size:%x\n", size);
 	}
-}
 
+}
 int vdec_vbuf_write(struct aml_vdec_adapt *ada_ctx,
 	const char *buf, unsigned int count)
 {
@@ -595,20 +579,17 @@ bool vdec_input_full(struct aml_vdec_adapt *ada_ctx)
 {
 	struct vdec_s *vdec = ada_ctx->vdec;
 
-	return (vdec->input.have_frame_num > 60) ? true : false;
+	return (vdec->input.have_frame_num > 600) ? true : false;
 }
 
 int vdec_vframe_write(struct aml_vdec_adapt *ada_ctx,
-	const char *buf, unsigned int count, u64 timestamp, ulong meta_ptr)
+	const char *buf, unsigned int count, u64 timestamp)
 {
 	int ret = -1;
 	struct vdec_s *vdec = ada_ctx->vdec;
 
 	/* set timestamp */
 	vdec_set_timestamp(vdec, timestamp);
-
-	/* set metadata */
-	vdec_set_metadata(vdec, meta_ptr);
 
 	ret = vdec_write_vframe(vdec, buf, count);
 
@@ -618,12 +599,9 @@ int vdec_vframe_write(struct aml_vdec_adapt *ada_ctx,
 		msleep(30);
 	}
 
-	if (dump_output_frame > 0 &&
-		(!dump_output_start_position ||
-		(dump_output_start_position == crc32_le(0, buf, count)))) {
+	if (dump_output_frame > 0) {
 		dump("/data/es.data", buf, count);
 		dump_output_frame--;
-		dump_output_start_position = 0;
 	}
 
 	v4l_dbg(ada_ctx->ctx, V4L_DEBUG_CODEC_INPUT,
@@ -680,14 +658,23 @@ int aml_codec_reset(struct aml_vdec_adapt *ada_ctx, int *mode)
 	int ret = 0;
 
 	if (vdec) {
-		if (ada_ctx->ctx->v4l_resolution_change)
-			*mode = V4L_RESET_MODE_LIGHT;
-		else
+		if (!ada_ctx->ctx->q_data[AML_Q_DATA_SRC].resolution_changed)
 			vdec_set_eos(vdec, false);
-
+		if (*mode == V4L_RESET_MODE_NORMAL &&
+			vdec->input.have_frame_num == 0) {
+			v4l_dbg(ada_ctx->ctx, V4L_DEBUG_CODEC_PRINFO,
+			"no input reset mode: %d\n", *mode);
+			*mode = V4L_RESET_MODE_LIGHT;
+		}
+		if (ada_ctx->ctx->param_sets_from_ucode &&
+			*mode == V4L_RESET_MODE_NORMAL &&
+			ada_ctx->ctx->q_data[AML_Q_DATA_SRC].resolution_changed == true) {
+			v4l_dbg(ada_ctx->ctx, V4L_DEBUG_CODEC_PRINFO,
+			"resolution_changed reset mode: %d\n", *mode);
+			*mode = V4L_RESET_MODE_LIGHT;
+		}
 		v4l_dbg(ada_ctx->ctx, V4L_DEBUG_CODEC_PRINFO,
-			"reset mode: %d, es frames buffering: %d\n",
-			*mode, vdec_frame_number(ada_ctx));
+			"reset mode: %d\n", *mode);
 
 		ret = vdec_v4l2_reset(vdec, *mode);
 		*mode = V4L_RESET_MODE_NORMAL;
@@ -720,11 +707,6 @@ int vdec_frame_number(struct aml_vdec_adapt *ada_ctx)
 		return vdec_get_frame_num(vdec);
 	else
 		return -1;
-}
-
-int vdec_get_instance_num(void)
-{
-	return vdec_get_core_nr();
 }
 
 void v4l2_config_vdec_parm(struct aml_vdec_adapt *ada_ctx, u8 *data, u32 len)

@@ -114,6 +114,11 @@
 	WRITE_HHI_REG_BITS(HHI_VDEC2_CLK_CNTL, 0, 8, 1);\
 }while(0)
 
+#define CHECK_RET(_ret) if (ret) {debug_print(\
+		"%s:%d:function call failed with result: %d\n",\
+		__FUNCTION__, __LINE__, _ret);}
+
+
 static int clock_real_clk[VDEC_MAX + 1];
 
 static unsigned int set_frq_enable, vdec_frq, hevc_frq, hevcb_frq;
@@ -125,14 +130,19 @@ static bool is_gp0_div2 = true;
 static int gp_pll_user_cb_vdec(struct gp_pll_user_handle_s *user,
 			int event)
 {
+	int ret;
+
 	debug_print("gp_pll_user_cb_vdec call\n");
 	if (event == GP_PLL_USER_EVENT_GRANT) {
 		struct clk *clk = clk_get(NULL, "gp0_pll");
 		if (!IS_ERR(clk)) {
-			if (is_gp0_div2)
-				clk_set_rate(clk, 1296000000UL);
-			else
-				clk_set_rate(clk, 648000000UL);
+			if (is_gp0_div2) {
+				ret = clk_set_rate(clk, 1296000000UL);
+				CHECK_RET(ret);
+			} else {
+				ret = clk_set_rate(clk, 648000000UL);
+				CHECK_RET(ret);
+			}
 			VDEC1_SAFE_CLOCK();
 			VDEC1_CLOCK_OFF();
 			if (is_gp0_div2)
@@ -416,9 +426,7 @@ void set_clock_gate(struct gate_switch_node *nodes, int num)
 	struct gate_switch_node *node = NULL;
 	char *hevc_mux_str = NULL;
 
-	if ((get_cpu_major_id() < AM_MESON_CPU_MAJOR_ID_SC2) ||
-		(get_cpu_major_id() == AM_MESON_CPU_MAJOR_ID_T5) ||
-		(get_cpu_major_id() == AM_MESON_CPU_MAJOR_ID_T5D))
+	if (get_cpu_major_id() < AM_MESON_CPU_MAJOR_ID_SC2)
 		hevc_mux_str = "clk_hevc_mux";
 	else
 		hevc_mux_str = "clk_hevcf_mux";
@@ -458,6 +466,7 @@ int vdec_set_clk(int dec, int source, int div)
 static int vdec_set_clk(int dec, int rate)
 {
 	struct clk *clk = NULL;
+	int ret;
 
 	switch (dec) {
 	case VDEC_1:
@@ -497,7 +506,8 @@ static int vdec_set_clk(int dec, int rate)
 		return -1;
 	}
 
-	clk_set_rate(clk, rate);
+	ret = clk_set_rate(clk, rate);
+	CHECK_RET(ret);
 
 	return 0;
 }
@@ -513,12 +523,12 @@ static int vdec_clock_init(void)
 {
 	gp_pll_user_vdec = gp_pll_user_register("vdec", 0,
 		gp_pll_user_cb_vdec);
-	if (get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_GXL)
+	if (get_cpu_major_id() >= MESON_CPU_MAJOR_ID_GXL)
 		is_gp0_div2 = false;
 	else
 		is_gp0_div2 = true;
 
-	if (get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_GXL) {
+	if (get_cpu_major_id() >= MESON_CPU_MAJOR_ID_GXL) {
 		pr_info("used fix clk for vdec clk source!\n");
 		//update_vdec_clk_config_settings(1);
 	}
@@ -733,13 +743,8 @@ static int vdec_clock_set(int clk)
 	}
 
 	if (get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_SM1 &&
-		get_cpu_major_id() != AM_MESON_CPU_MAJOR_ID_TL1 &&
-		get_cpu_major_id() != AM_MESON_CPU_MAJOR_ID_T5 &&
-		get_cpu_major_id() != AM_MESON_CPU_MAJOR_ID_T5D)
+		get_cpu_major_id() != AM_MESON_CPU_MAJOR_ID_TL1)
 		clk = 800;
-
-	if (is_cpu_s4_s805x2())
-		clk = 500;
 
 	if (set_frq_enable && vdec_frq) {
 		pr_info("Set the vdec frq is %u MHz\n", vdec_frq);
@@ -836,15 +841,10 @@ static int hevc_clock_set(int clk)
 	if ((clk > 500 && clk != 667)) {
 		if (clock_real_clk[VDEC_HEVC] == 648)
 			return 648;
-		if ((get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_SM1) &&
-			(get_cpu_major_id() != AM_MESON_CPU_MAJOR_ID_T5) &&
-			(get_cpu_major_id() != AM_MESON_CPU_MAJOR_ID_T5D))
+		if (get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_SM1)
 			clk = TL1_HEVC_MAX_CLK;
 		else
 			clk = 667;
-
-		if (is_cpu_s4_s805x2())
-			clk = 500;
 	}
 
 	if (set_frq_enable && hevc_frq) {
@@ -1029,6 +1029,7 @@ static int vdec_clock_get(enum vdec_type_e core)
 #define VDEC_HAS_VDEC_HCODEC
 #define VDEC_HAS_CLK_SETTINGS
 #define CLK_FOR_CPU {\
+	AM_MESON_CPU_MAJOR_ID_M8B,\
 	AM_MESON_CPU_MAJOR_ID_GXBB,\
 	AM_MESON_CPU_MAJOR_ID_GXTVBB,\
 	AM_MESON_CPU_MAJOR_ID_GXL,\
@@ -1042,13 +1043,6 @@ static int vdec_clock_get(enum vdec_type_e core)
 	AM_MESON_CPU_MAJOR_ID_TL1,\
 	AM_MESON_CPU_MAJOR_ID_TM2,\
 	AM_MESON_CPU_MAJOR_ID_SC2,\
-	AM_MESON_CPU_MAJOR_ID_T5,\
-	AM_MESON_CPU_MAJOR_ID_T5D,\
-	AM_MESON_CPU_MAJOR_ID_T7,\
-	AM_MESON_CPU_MAJOR_ID_S4,\
-	AM_MESON_CPU_MAJOR_ID_T3,\
-	AM_MESON_CPU_MAJOR_ID_P1,\
-	AM_MESON_CPU_MAJOR_ID_S4D,\
 	0}
 #include "clk.h"
 

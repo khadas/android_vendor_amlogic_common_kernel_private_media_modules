@@ -11,14 +11,14 @@ stream_input-objs	+=	parser/esparser.o
 stream_input-objs	+=	parser/tsdemux.o
 stream_input-objs	+=	parser/psparser.o
 stream_input-objs	+=	parser/rmparser.o
+stream_input-objs	+=	parser/dvb_common.o
 stream_input-objs	+=	subtitle/subtitle.o
 
-stream_input-objs	+=	parser/dvb_common.o
 obj-$(CONFIG_AMLOGIC_DVB)   += parser/hw_demux/
 obj-$(CONFIG_AMLOGIC_DVB)   += parser/dvb_ci/
 
 ccflags-y += -I.
-ccflags-y += -I$(srctree)/include/media
+ccflags-y += -I$(srctree)/drivers/media/dvb-core
 
 #obj-y 	+= 	tv_frontend/
 # obj-y	+=	box-frontend/avl6211/

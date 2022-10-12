@@ -37,19 +37,15 @@ int dpb_print(int index, int debug_flag, const char *fmt, ...)
 	if (((h264_debug_flag & debug_flag) &&
 		((1 << index) & h264_debug_mask))
 		|| (debug_flag == PRINT_FLAG_ERROR)) {
-		unsigned char *buf = kzalloc(512, GFP_ATOMIC);
+		unsigned char buf[512];
 		int len = 0;
 		va_list args;
-
-		if (!buf)
-			return 0;
 
 		va_start(args, fmt);
 		len = sprintf(buf, "%d: ", index);
 		vsnprintf(buf + len, 512-len, fmt, args);
 		pr_debug("%s", buf);
 		va_end(args);
-		kfree(buf);
 	}
 	return 0;
 }
@@ -59,18 +55,13 @@ int dpb_print_cont(int index, int debug_flag, const char *fmt, ...)
 	if (((h264_debug_flag & debug_flag) &&
 		((1 << index) & h264_debug_mask))
 		|| (debug_flag == PRINT_FLAG_ERROR)) {
-		unsigned char *buf = kzalloc(512, GFP_ATOMIC);
+		unsigned char buf[512];
 		int len = 0;
 		va_list args;
-
-		if (!buf)
-			return 0;
-
 		va_start(args, fmt);
 		vsnprintf(buf + len, 512-len, fmt, args);
 		pr_info("%s", buf);
 		va_end(args);
-		kfree(buf);
 	}
 	return 0;
 }
@@ -661,7 +652,7 @@ static void decode_poc(struct VideoParameters *p_Vid, struct Slice *pSlice)
 				(pSlice->toppoc < pSlice->bottompoc) ?
 				 pSlice->toppoc : pSlice->bottompoc;
 					/* POC200301 */
-		} else if (pSlice->bottom_field_flag == 0) {
+		} else if (pSlice->bottom_field_flag == FALSE) {
 			/* top field */
 			pSlice->ThisPOC = pSlice->toppoc =
 				pSlice->PicOrderCntMsb +
@@ -779,7 +770,7 @@ static void decode_poc(struct VideoParameters *p_Vid, struct Slice *pSlice)
 				(pSlice->toppoc < pSlice->bottompoc) ?
 				pSlice->toppoc : pSlice->bottompoc;
 				/* POC200301 */
-		} else if (pSlice->bottom_field_flag == 0) {
+		} else if (pSlice->bottom_field_flag == FALSE) {
 			/* top field */
 			pSlice->ThisPOC = pSlice->toppoc =
 				p_Vid->ExpectedPicOrderCnt +
@@ -833,7 +824,7 @@ static void decode_poc(struct VideoParameters *p_Vid, struct Slice *pSlice)
 			if (pSlice->field_pic_flag == 0)
 				pSlice->toppoc = pSlice->bottompoc =
 					pSlice->framepoc = pSlice->ThisPOC;
-			else if (pSlice->bottom_field_flag == 0)
+			else if (pSlice->bottom_field_flag == FALSE)
 				pSlice->toppoc = pSlice->framepoc =
 				pSlice->ThisPOC;
 			else
@@ -2202,6 +2193,7 @@ void bufmgr_h264_remove_unused_frame(struct h264_dpb_stru *p_H264_Dpb,
 	struct DecodedPictureBuffer *p_Dpb = &p_H264_Dpb->mDPB;
 	int ret = 0;
 	unsigned char removed_flag = 0;
+
 	do {
 		ret = remove_unused_frame_from_dpb(p_H264_Dpb);
 		if (ret != 0)
@@ -2699,90 +2691,108 @@ static void check_num_ref(struct DecodedPictureBuffer *p_Dpb)
 
 void dump_dpb(struct DecodedPictureBuffer *p_Dpb, u8 force)
 {
-	unsigned int i;
-	unsigned char *buf = NULL;
-	unsigned int buf_size = 512, len = 0;
+	unsigned i;
 	struct h264_dpb_stru *p_H264_Dpb =
 		container_of(p_Dpb, struct h264_dpb_stru, mDPB);
-
-#define DPB_STRCAT(args...)  do {	\
-		len += snprintf(buf + len,	\
-			buf_size - len, ##args);\
-	} while (0)
-
 	if ((h264_debug_flag & PRINT_FLAG_DUMP_DPB) == 0 &&
 		force == 0)
 		return;
-
-	buf = kzalloc(buf_size, GFP_ATOMIC);
-	if (buf == NULL)
-		return;
-
 	for (i = 0; i < p_Dpb->used_size; i++) {
-		len = 0;
-		memset(buf, 0, buf_size);
-		DPB_STRCAT("fn=%d  is_used %d ",
+		dpb_print(p_H264_Dpb->decoder_index,
+			0,
+			"(");
+		dpb_print_cont(p_H264_Dpb->decoder_index,
+			0,
+			"fn=%d  is_used %d ",
 			p_Dpb->fs[i]->frame_num,
 			p_Dpb->fs[i]->is_used);
-
 		if (p_Dpb->fs[i]->is_used & 1) {
 			if (p_Dpb->fs[i]->top_field)
-				DPB_STRCAT("T: poc=%d  pic_num=%d ",
+				dpb_print_cont(p_H264_Dpb->decoder_index,
+				0,
+				"T: poc=%d  pic_num=%d ",
 				p_Dpb->fs[i]->top_field->poc,
 				p_Dpb->fs[i]->top_field->pic_num);
 			else
-				DPB_STRCAT("T: poc=%d  ",
+				dpb_print_cont(p_H264_Dpb->decoder_index,
+				0,
+				"T: poc=%d  ",
 				p_Dpb->fs[i]->frame->top_poc);
 		}
 		if (p_Dpb->fs[i]->is_used & 2) {
 			if (p_Dpb->fs[i]->bottom_field)
-				DPB_STRCAT("B: poc=%d  pic_num=%d ",
+				dpb_print_cont(p_H264_Dpb->decoder_index,
+				0,
+				"B: poc=%d  pic_num=%d ",
 				p_Dpb->fs[i]->bottom_field->poc,
 				p_Dpb->fs[i]->bottom_field->pic_num);
 			else
-				DPB_STRCAT("B: poc=%d  ",
+				dpb_print_cont(p_H264_Dpb->decoder_index,
+				0,
+				"B: poc=%d  ",
 				p_Dpb->fs[i]->frame->bottom_poc);
 		}
 		if (p_Dpb->fs[i]->is_used == 3) {
 			if (p_Dpb->fs[i]->frame != NULL)
-				DPB_STRCAT("F: poc=%d pic_num=%d ",
+				dpb_print_cont(p_H264_Dpb->decoder_index,
+				0,
+				"F: poc=%d pic_num=%d ",
 				p_Dpb->fs[i]->frame->poc,
 				p_Dpb->fs[i]->frame->pic_num);
 			else
-				DPB_STRCAT("fs[%d] frame is null ", i);
+				dpb_print_cont(p_H264_Dpb->decoder_index,
+				0, "fs[%d] frame is null ", i);
 		}
-		DPB_STRCAT("G: poc=%d)  ", p_Dpb->fs[i]->poc);
+		dpb_print_cont(p_H264_Dpb->decoder_index,
+			0,
+			"G: poc=%d)  ", p_Dpb->fs[i]->poc);
 		if (p_Dpb->fs[i]->is_reference)
-			DPB_STRCAT("ref (%d) ", p_Dpb->fs[i]->is_reference);
+			dpb_print_cont(p_H264_Dpb->decoder_index,
+			0,
+			"ref (%d) ", p_Dpb->fs[i]->is_reference);
 		if (p_Dpb->fs[i]->is_long_term)
-			DPB_STRCAT("lt_ref (%d) ", p_Dpb->fs[i]->is_reference);
+			dpb_print_cont(p_H264_Dpb->decoder_index,
+			0,
+			"lt_ref (%d) ", p_Dpb->fs[i]->is_reference);
 		if (p_Dpb->fs[i]->is_output)
-			DPB_STRCAT("out(displayed)  ");
+			dpb_print_cont(p_H264_Dpb->decoder_index,
+			0,
+			"out(displayed)  ");
 		if (p_Dpb->fs[i]->pre_output)
-			DPB_STRCAT("pre_output(in dispq or displaying)  ");
+			dpb_print_cont(p_H264_Dpb->decoder_index,
+			0,
+			"pre_output(in dispq or displaying)  ");
 		if (p_Dpb->fs[i]->is_used == 3) {
 			if (p_Dpb->fs[i]->frame != NULL && p_Dpb->fs[i]->frame->non_existing)
-				DPB_STRCAT("non_existing  ");
+				dpb_print_cont(p_H264_Dpb->decoder_index,
+				0,
+				"non_existing  ");
 			else
-				DPB_STRCAT("fs[%d] frame is null ", i);
+				dpb_print_cont(p_H264_Dpb->decoder_index,
+				0, "fs[%d] frame is null ", i);
 		}
-		DPB_STRCAT("dpb_frame_count %d  ",
+		dpb_print_cont(p_H264_Dpb->decoder_index,
+			0,
+			"dpb_frame_count %d  ",
 			p_Dpb->fs[i]->dpb_frame_count);
 
 #if (MVC_EXTENSION_ENABLE)
 		if (p_Dpb->fs[i]->is_reference)
-			DPB_STRCAT("view_id (%d) ", p_Dpb->fs[i]->view_id);
+			dpb_print_cont(p_H264_Dpb->decoder_index,
+			0,
+			"view_id (%d) ", p_Dpb->fs[i]->view_id);
 #endif
 		if (p_Dpb->fs[i]->data_flag) {
-			DPB_STRCAT("data_flag(0x%x)",
+			dpb_print_cont(p_H264_Dpb->decoder_index,
+			0,
+			"data_flag(0x%x)",
 			p_Dpb->fs[i]->data_flag);
 		}
-		DPB_STRCAT(" bufspec %d\n",
+		dpb_print_cont(p_H264_Dpb->decoder_index,
+			0,
+			" bufspec %d\n",
 			p_Dpb->fs[i]->buf_spec_num);
-		dpb_print(p_H264_Dpb->decoder_index, 0, "%s", buf);
 	}
-
-	kfree(buf);
 }
 
 /*!
@@ -5064,7 +5074,7 @@ static void reorder_short_term(struct Slice *currSlice, int cur_list,
 	}
 
 	dpb_print(p_H264_Dpb->decoder_index, PRINT_FLAG_DPB_DETAIL,
-		"%s: RefPicListX[ %d ] = pic %x (%d)\n", __func__,
+		"%s: RefPicListX[ %d ] = pic %px (%d)\n", __func__,
 		*refIdxLX, picLX, picNumLX);
 
 	RefPicListX[(*refIdxLX)++] = picLX;
@@ -5499,7 +5509,7 @@ void init_old_slice(OldSliceParams *p_old_slice)
 	p_old_slice->pps_id         = INT_MAX;
 	p_old_slice->frame_num      = INT_MAX;
 	p_old_slice->nal_ref_idc    = INT_MAX;
-	p_old_slice->idr_flag       = 0;
+	p_old_slice->idr_flag       = FALSE;
 
 	p_old_slice->pic_oder_cnt_lsb          = UINT_MAX;
 	p_old_slice->delta_pic_oder_cnt_bottom = INT_MAX;
@@ -5834,7 +5844,11 @@ int h264_slice_header_process(struct h264_dpb_stru *p_H264_Dpb, int *frame_num_g
 						 *  p_Vid->height_cr,
 						 */
 						 1);
-		if (p_H264_Dpb->mVideo.dec_picture) {
+		if (!p_H264_Dpb->mVideo.dec_picture) {
+			dpb_print(p_H264_Dpb->decoder_index,
+				PRINT_FLAG_DPB_DETAIL, "p_H264_Dpb->decoder_index is null\n");
+			return -1;
+		} else {
 			u32 offset_lo, offset_hi;
 			struct DecodedPictureBuffer *p_Dpb =
 				&p_H264_Dpb->mDPB;

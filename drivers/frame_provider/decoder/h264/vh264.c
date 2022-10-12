@@ -23,6 +23,7 @@
 #include <linux/timer.h>
 #include <linux/kfifo.h>
 #include <linux/platform_device.h>
+
 #include <linux/amlogic/media/utils/amstream.h>
 #include <linux/amlogic/media/frame_sync/ptsserv.h>
 #include <linux/amlogic/media/vfm/vframe.h>
@@ -37,6 +38,7 @@
 #include <linux/slab.h>
 #include "../../../stream_input/amports/amports_priv.h"
 #include <linux/amlogic/media/canvas/canvas.h>
+
 #include "../utils/vdec.h"
 #include <linux/amlogic/media/utils/vdec_reg.h>
 #include "../utils/amvdec.h"
@@ -44,16 +46,17 @@
 #include "../../../stream_input/amports/streambuf.h"
 #include <linux/delay.h>
 #include <linux/amlogic/media/video_sink/video.h>
-//#include <linux/amlogic/tee.h>
-#include <uapi/linux/tee.h>
 #include <linux/amlogic/media/ge2d/ge2d.h>
 #include "../utils/decoder_mmu_box.h"
 #include "../utils/decoder_bmmu_box.h"
 #include <linux/amlogic/media/codec_mm/codec_mm.h>
 #include <linux/amlogic/media/codec_mm/configs.h>
 #include "../utils/firmware.h"
+#include "../utils/secprot.h"
 #include "../../../common/chips/decoder_cpu_ver_info.h"
 #include <linux/uaccess.h>
+
+
 
 #define DRIVER_NAME "amvdec_h264"
 #define MODULE_NAME "amvdec_h264"
@@ -156,7 +159,7 @@ static int vh264_event_cb(int type, void *data, void *private_data);
 
 static void vh264_prot_init(void);
 static int vh264_local_init(void);
-static void vh264_put_timer_func(struct timer_list *timer);
+static void vh264_put_timer_func(unsigned long arg);
 static void stream_switching_done(void);
 
 static const char vh264_dec_id[] = "vh264-dev";
@@ -248,6 +251,14 @@ static unsigned int canvas_mode;
 static u32 bad_block_scale;
 #endif
 static u32 enable_userdata_debug;
+
+/* if not define, must clear AV_SCRATCH_J in isr when
+ * ITU_T35 code enabled in ucode, otherwise may fatal
+ * error repeatly.
+ */
+//#define ENABLE_SEI_ITU_T35
+
+
 
 static unsigned int enable_switch_fense = 1;
 #define EN_SWITCH_FENCE() (enable_switch_fense && !is_4k)
@@ -460,15 +471,15 @@ void spec_set_canvas(struct buffer_spec_s *spec,
 	int endian;
 
 	endian = (canvas_mode == CANVAS_BLKMODE_LINEAR)?7:0;
-	config_cav_lut_ex(spec->y_canvas_index,
+	canvas_config_ex(spec->y_canvas_index,
 			spec->y_addr,
 			width, height,
-			CANVAS_ADDR_NOWRAP, canvas_mode, endian, VDEC_1);
+			CANVAS_ADDR_NOWRAP, canvas_mode, endian);
 
-	config_cav_lut_ex(spec->u_canvas_index,
+	canvas_config_ex(spec->u_canvas_index,
 			spec->u_addr,
 			width, height / 2,
-			CANVAS_ADDR_NOWRAP, canvas_mode, endian, VDEC_1);
+			CANVAS_ADDR_NOWRAP, canvas_mode, endian);
 
 }
 
@@ -2196,16 +2207,16 @@ static void vh264_set_params(struct work_struct *work)
 				buffer_spec[i].v_canvas_height = mb_height << 4;
 
 				endian = (canvas_mode == CANVAS_BLKMODE_LINEAR)?7:0;
-				config_cav_lut_ex(128 + i * 2,
+				canvas_config_ex(128 + i * 2,
 						buffer_spec[i].y_addr,
 						mb_width << 4, mb_height << 4,
 						CANVAS_ADDR_NOWRAP,
-						canvas_mode, endian, VDEC_1);
-				config_cav_lut_ex(128 + i * 2 + 1,
+						canvas_mode, endian);
+				canvas_config_ex(128 + i * 2 + 1,
 						buffer_spec[i].u_addr,
 						mb_width << 4, mb_height << 3,
 						CANVAS_ADDR_NOWRAP,
-						canvas_mode, endian, VDEC_1);
+						canvas_mode, endian);
 				WRITE_VREG(ANC0_CANVAS_ADDR + i,
 						spec2canvas(&buffer_spec[i]));
 				} else {
@@ -2586,6 +2597,7 @@ static inline void h264_update_gvs(void)
 		ar << DISP_RATIO_ASPECT_RATIO_BIT;
 	gvs->ratio_control = ratio_control;
 }
+
 
 #ifdef HANDLE_H264_IRQ
 static irqreturn_t vh264_isr(int irq, void *dev_id)
@@ -3335,8 +3347,9 @@ static void vh264_set_clk(struct work_struct *work)
 			frame_width, frame_height, fps);
 }
 
-static void vh264_put_timer_func(struct timer_list *timer)
+static void vh264_put_timer_func(unsigned long arg)
 {
+	struct timer_list *timer = (struct timer_list *)arg;
 	unsigned int wait_buffer_status;
 	unsigned int wait_i_pass_frames;
 	unsigned int reg_val;
@@ -3598,7 +3611,7 @@ static void vh264_prot_init(void)
 
 	WRITE_VREG(AV_SCRATCH_0, 0);
 	WRITE_VREG(AV_SCRATCH_1, buf_offset);
-	if (!tee_enabled())
+	if (!vdec_tee_enabled())
 		WRITE_VREG(AV_SCRATCH_G, mc_dma_handle);
 	WRITE_VREG(AV_SCRATCH_7, 0);
 	WRITE_VREG(AV_SCRATCH_8, 0);
@@ -3786,7 +3799,7 @@ static s32 vh264_init(void)
 	int firmwareloaded = 0;
 
 	/* pr_info("\nvh264_init\n"); */
-	timer_setup(&recycle_timer, vh264_put_timer_func, 0);
+	init_timer(&recycle_timer);
 
 	stat |= STAT_TIMER_INIT;
 
@@ -3816,12 +3829,12 @@ static s32 vh264_init(void)
 	query_video_status(0, &trickmode_fffb);
 
 	amvdec_enable();
-	if (!firmwareloaded && tee_enabled()) {
+	if (!firmwareloaded && vdec_tee_enabled()) {
 		ret = amvdec_loadmc_ex(VFORMAT_H264, NULL, NULL);
 		if (ret < 0) {
 			amvdec_disable();
 			pr_err("H264: the %s fw loading failed, err: %x\n",
-				tee_enabled() ? "TEE" : "local", ret);
+				vdec_tee_enabled() ? "TEE" : "local", ret);
 			return ret;
 		}
 	} else {
@@ -3931,7 +3944,7 @@ static s32 vh264_init(void)
 				mc_cpu_addr = NULL;
 			}
 			pr_err("H264: the %s fw loading failed, err: %x\n",
-				tee_enabled() ? "TEE" : "local", ret);
+				vdec_tee_enabled() ? "TEE" : "local", ret);
 			return -EBUSY;
 		}
 	}
@@ -3978,7 +3991,10 @@ static s32 vh264_init(void)
 
 	stat |= STAT_VF_HOOK;
 
+	recycle_timer.data = (ulong) &recycle_timer;
+	recycle_timer.function = vh264_put_timer_func;
 	recycle_timer.expires = jiffies + PUT_INTERVAL;
+
 	add_timer(&recycle_timer);
 
 	stat |= STAT_TIMER_ARM;
@@ -4207,17 +4223,17 @@ static void stream_switching_do(struct work_struct *work)
 			canvas_read(y_index, &csy);
 			canvas_read(u_index, &csu);
 
-			config_cav_lut_ex(fense_buffer_spec[i].y_canvas_index,
+			canvas_config(fense_buffer_spec[i].y_canvas_index,
 				fense_buffer_spec[i].phy_addr,
 				mb_width_num << 4, mb_height_num << 4,
 				CANVAS_ADDR_NOWRAP,
-				CANVAS_BLKMODE_LINEAR, 0, VDEC_1);
-			config_cav_lut_ex(fense_buffer_spec[i].u_canvas_index,
+				CANVAS_BLKMODE_LINEAR);
+			canvas_config(fense_buffer_spec[i].u_canvas_index,
 				fense_buffer_spec[i].phy_addr +
 				(mb_total_num << 8),
 				mb_width_num << 4, mb_height_num << 3,
 				CANVAS_ADDR_NOWRAP,
-				CANVAS_BLKMODE_LINEAR, 0, VDEC_1);
+				CANVAS_BLKMODE_LINEAR);
 
 			y_desindex = fense_buffer_spec[i].y_canvas_index;
 			u_desindex = fense_buffer_spec[i].u_canvas_index;
@@ -4334,6 +4350,8 @@ static int amvdec_h264_probe(struct platform_device *pdev)
 	INIT_WORK(&userdata_push_work, userdata_push_do_work);
 	INIT_WORK(&qos_work, qos_do_work);
 
+
+
 	atomic_set(&vh264_active, 1);
 
 	mutex_unlock(&vh264_mutex);
@@ -4376,16 +4394,32 @@ static int amvdec_h264_remove(struct platform_device *pdev)
 }
 
 /****************************************/
+#ifdef CONFIG_PM
+static int h264_suspend(struct device *dev)
+{
+	amvdec_suspend(to_platform_device(dev), dev->power.power_state);
+	return 0;
+}
+
+static int h264_resume(struct device *dev)
+{
+	amvdec_resume(to_platform_device(dev));
+	return 0;
+}
+
+static const struct dev_pm_ops h264_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(h264_suspend, h264_resume)
+};
+#endif
 
 static struct platform_driver amvdec_h264_driver = {
 	.probe = amvdec_h264_probe,
 	.remove = amvdec_h264_remove,
-#ifdef CONFIG_PM
-	.suspend = amvdec_suspend,
-	.resume = amvdec_resume,
-#endif
 	.driver = {
 		.name = DRIVER_NAME,
+#ifdef CONFIG_PM
+		.pm = &h264_pm_ops,
+#endif
 	}
 };
 
@@ -4425,8 +4459,7 @@ static int __init amvdec_h264_driver_init_module(void)
 		return -ENODEV;
 	}
 	if (get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_GXTVBB
-		&& (codec_mm_get_total_size() > 80 * SZ_1M) &&
-		get_cpu_major_id() != AM_MESON_CPU_MAJOR_ID_T5D) {
+		&& (codec_mm_get_total_size() > 80 * SZ_1M)) {
 		amvdec_h264_profile.profile = "4k";
 	}
 	vcodec_profile_register(&amvdec_h264_profile);
@@ -4456,7 +4489,7 @@ module_param(dec_control, uint, 0664);
 MODULE_PARM_DESC(dec_control, "\n amvdec_h264 decoder control\n");
 module_param(frame_count, uint, 0664);
 MODULE_PARM_DESC(frame_count,
-		"\n amvdec_h264 decoded total count\n");
+       "\n amvdec_h264 decoded total count\n");
 module_param(fatal_error_reset, uint, 0664);
 MODULE_PARM_DESC(fatal_error_reset,
 		"\n amvdec_h264 decoder reset when fatal error happens\n");

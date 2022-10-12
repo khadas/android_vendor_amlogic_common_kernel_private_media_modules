@@ -27,12 +27,13 @@
 #include "aml_vcodec_drv.h"
 
 struct aml_vdec_adapt {
-	int format;
+	enum vformat_e format;
 	void *vsi;
 	int32_t failure;
 	uint32_t inst_addr;
 	unsigned int signaled;
 	struct aml_vcodec_ctx *ctx;
+	struct platform_device *dev;
 	wait_queue_head_t wq;
 	struct file *filp;
 	struct vdec_s *vdec;
@@ -40,7 +41,8 @@ struct aml_vdec_adapt {
 	struct dec_sysinfo dec_prop;
 	struct v4l2_config_parm config;
 	int video_type;
-	char *frm_name;
+	char *recv_name;
+	int vfm_path;
 };
 
 int video_decoder_init(struct aml_vdec_adapt *ada_ctx);
@@ -51,7 +53,7 @@ int vdec_vbuf_write(struct aml_vdec_adapt *ada_ctx,
 	const char *buf, unsigned int count);
 
 int vdec_vframe_write(struct aml_vdec_adapt *ada_ctx,
-	const char *buf, unsigned int count, u64 timestamp, ulong meta_ptr);
+	const char *buf, unsigned int count, u64 timestamp);
 
 void vdec_vframe_input_free(void *priv, u32 handle);
 
@@ -70,8 +72,6 @@ extern void dump_write(const char __user *buf, size_t count);
 bool is_input_ready(struct aml_vdec_adapt *ada_ctx);
 
 int vdec_frame_number(struct aml_vdec_adapt *ada_ctx);
-
-int vdec_get_instance_num(void);
 
 #endif /* VDEC_ADAPT_H */
 

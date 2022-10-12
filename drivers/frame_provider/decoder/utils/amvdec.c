@@ -41,10 +41,9 @@
 /* #include <mach/power_gate.h> */
 #include <linux/amlogic/media/utils/vdec_reg.h>
 #include "amvdec.h"
+#include "secprot.h"
 #include <linux/amlogic/media/utils/amports_config.h>
 #include "firmware.h"
-//#include <linux/amlogic/tee.h>
-#include <uapi/linux/tee.h>
 #include "../../../common/chips/decoder_cpu_ver_info.h"
 
 #define MC_SIZE (4096 * 16)
@@ -485,20 +484,17 @@ s32 optee_load_fw(enum vformat_e type, const char *fw_name)
 		} else
 			format = VIDEO_DEC_H264;
 		break;
-	case VFORMAT_JPEG_ENC:
-		format = VIDEO_ENC_JPEG;
-		vdec = OPTEE_VDEC_HCDEC;
-		break;
+
 	default:
-		pr_info("Unknow vdec format: %u\n", (u32)type);
+		pr_info("Unknow vdec format!\n");
 		break;
 	}
 
 	if (format < FIRMWARE_MAX) {
 		if (is_swap)
-			ret = tee_load_video_fw_swap(format, vdec, is_swap);
+			ret = vdec_tee_load_video_fw_swap(format, vdec, is_swap);
 		else
-			ret = tee_load_video_fw(format, vdec);
+			ret = vdec_tee_load_video_fw(format, vdec);
 	}
 
 	__putname(name);
@@ -509,7 +505,7 @@ EXPORT_SYMBOL(optee_load_fw);
 
 s32 amvdec_loadmc_ex(enum vformat_e type, const char *name, char *def)
 {
-	if (tee_enabled())
+	if (vdec_tee_enabled())
 		return optee_load_fw(type, name);
 	else
 		return am_loadmc_ex(type, name, def, &amvdec_loadmc);
@@ -519,7 +515,7 @@ EXPORT_SYMBOL(amvdec_loadmc_ex);
 s32 amvdec_vdec_loadmc_ex(enum vformat_e type, const char *name,
 	struct vdec_s *vdec, char *def)
 {
-	if (tee_enabled())
+	if (vdec_tee_enabled())
 		return optee_load_fw(type, name);
 	else
 		return am_vdec_loadmc_ex(vdec, name, def, &amvdec_loadmc);
@@ -529,7 +525,7 @@ EXPORT_SYMBOL(amvdec_vdec_loadmc_ex);
 s32 amvdec_vdec_loadmc_buf_ex(enum vformat_e type, const char *name,
 	struct vdec_s *vdec, char *buf, int size)
 {
-	if (tee_enabled())
+	if (vdec_tee_enabled())
 		return optee_load_fw(type, name);
 	else
 		return am_vdec_loadmc_buf_ex(vdec, buf, size, &amvdec_loadmc);
@@ -679,17 +675,13 @@ static s32 amhevc_loadmc(const u32 *p)
 
 		WRITE_VREG(HEVC_IMEM_DMA_ADR, mc_addr_map);
 		WRITE_VREG(HEVC_IMEM_DMA_COUNT, 0x1000);
-		if ((get_cpu_major_id() == AM_MESON_CPU_MAJOR_ID_T7) ||
-			(get_cpu_major_id() == AM_MESON_CPU_MAJOR_ID_T3))
-			WRITE_VREG(HEVC_IMEM_DMA_CTRL, (0x8000 | (0xf << 16)));
-		else
-			WRITE_VREG(HEVC_IMEM_DMA_CTRL, (0x8000 | (0x7 << 16)));
+		WRITE_VREG(HEVC_IMEM_DMA_CTRL, (0x8000 | (7 << 16)));
 
 		while (READ_VREG(HEVC_IMEM_DMA_CTRL) & 0x8000) {
 			if (time_before(jiffies, timeout))
 				schedule();
 			else {
-				pr_err("hevc load mc error\n");
+				pr_err("vdec2 load mc error\n");
 				ret = -EBUSY;
 				break;
 			}
@@ -710,7 +702,7 @@ static s32 amhevc_loadmc(const u32 *p)
 s32 amhevc_loadmc_ex(enum vformat_e type, const char *name, char *def)
 {
 	if (has_hevc_vdec())
-		if (tee_enabled())
+		if (vdec_tee_enabled())
 			return optee_load_fw(type, name);
 		else
 			return am_loadmc_ex(type, name, def, &amhevc_loadmc);
@@ -723,7 +715,7 @@ s32 amhevc_vdec_loadmc_ex(enum vformat_e type, struct vdec_s *vdec,
 	const char *name, char *def)
 {
 	if (has_hevc_vdec())
-		if (tee_enabled())
+		if (vdec_tee_enabled())
 			return optee_load_fw(type, name);
 		else
 			return am_vdec_loadmc_ex(vdec, name, def, &amhevc_loadmc);
@@ -1169,8 +1161,9 @@ static void __exit amvdec_exit(void)
 
 module_init(amvdec_init);
 module_exit(amvdec_exit);
-#endif
+
 
 MODULE_DESCRIPTION("Amlogic Video Decoder Utility Driver");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Tim Yao <timyao@amlogic.com>");
+#endif

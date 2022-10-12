@@ -1,5 +1,5 @@
 /*
- * drivers/amlogic/amports/vav1.h
+ * drivers/amlogic/amports/vreal.h
  *
  * Copyright (C) 2015 Amlogic, Inc. All rights reserved.
  *
@@ -15,8 +15,12 @@
  *
  */
 
-#ifndef VAV1_H
-#define VAV1_H
-void adapt_coef_probs(int pic_count, int prev_kf, int cur_kf, int pre_fc,
-unsigned int *prev_prob, unsigned int *cur_prob, unsigned int *count);
+#ifndef VREAL_H
+#define VREAL_H
+
+#if 1				/* MESON_CPU_TYPE >= MESON_CPU_TYPE_MESON6 */
+/* TODO: move to register headers */
+#define VPP_VD1_POSTBLEND           (1 << 10)
 #endif
+
+#endif				/* VREAL_H */

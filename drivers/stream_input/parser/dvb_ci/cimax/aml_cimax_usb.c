@@ -24,9 +24,6 @@
 #include <linux/mutex.h>
 #include <linux/firmware.h>
 #include <linux/delay.h>
-#include <linux/of_gpio.h>
-#include <linux/sched/clock.h>
-
 //#include <linux/switch.h>
 
 #include "aml_cimax.h"
@@ -472,8 +469,8 @@ module_param_named(usbcam_irq_mode, cam_irq_mode, int, 0644);
 #define REG_TIMEOUT 500
 #define CAM_TIMEOUT 5000
 
-static int aml_cimax_usb_mod_init(struct platform_device *pdev);
-static void aml_cimax_usb_mod_exit(struct platform_device *pdev);
+static int aml_cimax_usb_mod_init(void);
+static void aml_cimax_usb_mod_exit(void);
 
 static int cimax_usb_set_loop(struct cimax_usb *usb, int loop);
 
@@ -1188,7 +1185,7 @@ int cimax_usb_dev_add(struct device_s *dev, int id)
 	if (!g_usb)
 		return 0;
 
-	(void)id;
+	id = id;
 
 	cimax_usb_device_open(dev);
 	cimax_usb_select_interface(dev, 3);
@@ -1227,7 +1224,7 @@ int cimax_usb_dev_remove(struct device_s *dev, int id)
 	pr_dbg("dev remove\n");
 	if (!g_usb)
 		return 0;
-	(void)id;
+	id = id;
 	pr_dbg("setup poll -> stop\n");
 	cimax_usb_setup_poll(g_usb, STOP_MODE);
 	pr_dbg("setup poll end\n");
@@ -1325,7 +1322,7 @@ int aml_cimax_usb_init(struct platform_device *pdev, struct aml_cimax *cimax)
 
 	g_usb = cimax_usb;
 
-	aml_cimax_usb_mod_init(pdev);
+	aml_cimax_usb_mod_init();
 
 	cimax_usb_set_cb(cimax_usb_dev_add, cimax_usb_dev_remove);
 
@@ -1340,7 +1337,7 @@ int aml_cimax_usb_exit(struct aml_cimax *cimax)
 	if (!usb)
 		return -ENODEV;
 
-	aml_cimax_usb_mod_exit(usb->pdev);
+	aml_cimax_usb_mod_exit();
 
 	cimax_usb_device_close(usb->dev);
 	cimax_usb_setup_poll(usb, STOP_MODE);
@@ -1682,50 +1679,34 @@ static ssize_t detect_store(struct class *class,
 	return size;
 }
 
-static CLASS_ATTR_RW(reset);
-static CLASS_ATTR_RO(debug);
-static CLASS_ATTR_RW(addr);
-static CLASS_ATTR_RW(reg);
-static CLASS_ATTR_RW(cis);
-static CLASS_ATTR_RO(ts_rate);
-static CLASS_ATTR_RW(loop);
-static CLASS_ATTR_WO(slot_reset);
-static CLASS_ATTR_WO(detect);
 
-#define CLASS_ATTR(name) &class_attr_##name.attr
-
-static struct attribute *cimax_usb_class_attrs[] = {
-	CLASS_ATTR(reset),
-	CLASS_ATTR(debug),
-	CLASS_ATTR(addr),
-	CLASS_ATTR(reg),
-	CLASS_ATTR(cis),
-	CLASS_ATTR(ts_rate),
-	CLASS_ATTR(loop),
-	CLASS_ATTR(slot_reset),
-	CLASS_ATTR(detect),
-	NULL
+static struct class_attribute cimax_usb_class_attrs[] = {
+	__ATTR_RW(reset),
+	__ATTR_RO(debug),
+	__ATTR_RW(addr),
+	__ATTR_RW(reg),
+	__ATTR_RW(cis),
+	__ATTR_RO(ts_rate),
+	__ATTR_RW(loop),
+	__ATTR_WO(slot_reset),
+	__ATTR_WO(detect),
+	__ATTR_NULL
 };
-
-
-ATTRIBUTE_GROUPS(cimax_usb_class);
 
 static struct class cimax_usb_class = {
 	.name = "cimax_usb",
-	.class_groups = cimax_usb_class_groups,
+	.class_attrs = cimax_usb_class_attrs,
 };
 
-static int aml_cimax_usb_mod_init(struct platform_device *pdev)
+static int aml_cimax_usb_mod_init(void)
 {
 	int ret;
 	pr_dbg("Amlogic CIMAX USB Init\n");
-
 	ret = class_register(&cimax_usb_class);
-
 	return 0;
 }
 
-static void aml_cimax_usb_mod_exit(struct platform_device *pdev)
+static void aml_cimax_usb_mod_exit(void)
 {
 	pr_dbg("Amlogic CIMAX USB Exit\n");
 	class_unregister(&cimax_usb_class);

@@ -24,7 +24,7 @@
 #include <linux/errno.h>
 #include <linux/platform_device.h>
 #include <linux/of_device.h>
-#include <linux/amlogic/media/registers/cpu_version.h>
+#include <linux/amlogic/cpu_version.h>
 #include "decoder_cpu_ver_info.h"
 
 #define DECODE_CPU_VER_ID_NODE_NAME "cpu_ver_name"
@@ -32,7 +32,6 @@
 #define MAJOR_ID_START AM_MESON_CPU_MAJOR_ID_M6
 
 static enum AM_MESON_CPU_MAJOR_ID cpu_ver_id = AM_MESON_CPU_MAJOR_ID_MAX;
-static int cpu_sub_id = 0;
 
 static enum AM_MESON_CPU_MAJOR_ID cpu_ver_info[AM_MESON_CPU_MAJOR_ID_MAX - MAJOR_ID_START]=
 {
@@ -58,24 +57,21 @@ static enum AM_MESON_CPU_MAJOR_ID cpu_ver_info[AM_MESON_CPU_MAJOR_ID_MAX - MAJOR
 	AM_MESON_CPU_MAJOR_ID_G12B,
 	AM_MESON_CPU_MAJOR_ID_GXLX2,
 	AM_MESON_CPU_MAJOR_ID_SM1,
-	AM_MESON_CPU_MAJOR_ID_A1,
+	AM_MESON_CPU_MAJOR_ID_RES_0x2c,
 	AM_MESON_CPU_MAJOR_ID_RES_0x2d,
 	AM_MESON_CPU_MAJOR_ID_TL1,
 	AM_MESON_CPU_MAJOR_ID_TM2,
-	AM_MESON_CPU_MAJOR_ID_C1,
+	AM_MESON_CPU_MAJOR_ID_RES_0x30,
 	AM_MESON_CPU_MAJOR_ID_RES_0x31,
 	AM_MESON_CPU_MAJOR_ID_SC2,
-	AM_MESON_CPU_MAJOR_ID_C2,
-	AM_MESON_CPU_MAJOR_ID_T5,
-	AM_MESON_CPU_MAJOR_ID_T5D,
-	AM_MESON_CPU_MAJOR_ID_T7,
-	AM_MESON_CPU_MAJOR_ID_S4,
-	AM_MESON_CPU_MAJOR_ID_T3,
-	AM_MESON_CPU_MAJOR_ID_P1,
-	AM_MESON_CPU_MAJOR_ID_S4D,
 };
 
 static const struct of_device_id cpu_ver_of_match[] = {
+	{
+		.compatible = "amlogic, cpu-major-id-m8b",
+		.data = &cpu_ver_info[AM_MESON_CPU_MAJOR_ID_M8B - MAJOR_ID_START],
+	},
+
 	{
 		.compatible = "amlogic, cpu-major-id-axg",
 		.data = &cpu_ver_info[AM_MESON_CPU_MAJOR_ID_AXG - MAJOR_ID_START],
@@ -123,86 +119,32 @@ static const struct of_device_id cpu_ver_of_match[] = {
 		.compatible = "amlogic, cpu-major-id-sc2",
 		.data = &cpu_ver_info[AM_MESON_CPU_MAJOR_ID_SC2 - MAJOR_ID_START],
 	},
-	{
-		.compatible = "amlogic, cpu-major-id-t5",
-		.data = &cpu_ver_info[AM_MESON_CPU_MAJOR_ID_T5 - MAJOR_ID_START],
-	},
-	{
-		.compatible = "amlogic, cpu-major-id-t5d",
-		.data = &cpu_ver_info[AM_MESON_CPU_MAJOR_ID_T5D - MAJOR_ID_START],
-	},
-	{
-		.compatible = "amlogic, cpu-major-id-t7",
-		.data = &cpu_ver_info[AM_MESON_CPU_MAJOR_ID_T7 - MAJOR_ID_START],
-	},
-	{
-		.compatible = "amlogic, cpu-major-id-s4",
-		.data = &cpu_ver_info[AM_MESON_CPU_MAJOR_ID_S4 - MAJOR_ID_START],
-	},
-	{
-		.compatible = "amlogic, cpu-major-id-t3",
-		.data = &cpu_ver_info[AM_MESON_CPU_MAJOR_ID_T3 - MAJOR_ID_START],
-	},
-	{
-		.compatible = "amlogic, cpu-major-id-p1",
-		.data = &cpu_ver_info[AM_MESON_CPU_MAJOR_ID_P1 - MAJOR_ID_START],
-	},
-	{
-		.compatible = "amlogic, cpu-major-id-s4d",
-		.data = &cpu_ver_info[AM_MESON_CPU_MAJOR_ID_S4D - MAJOR_ID_START],
-	},
 	{},
 };
 
-static const int cpu_sub_info[] = {
-		AM_MESON_CPU_MINOR_ID_REVB_G12B,
-		AM_MESON_CPU_MINOR_ID_REVB_TM2,
-		AM_MESON_CPU_MINOR_ID_S4_S805X2,
-};
-
-static const struct of_device_id cpu_sub_id_of_match[] = {
-	{
-		.compatible = "amlogic, cpu-major-id-g12b-b",
-		.data = &cpu_sub_info[0],
-	},
-	{
-		.compatible = "amlogic, cpu-major-id-tm2-b",
-		.data = &cpu_sub_info[1],
-	},
-	{
-		.compatible = "amlogic, cpu-major-id-s4-805x2",
-		.data = &cpu_sub_info[2],
-	},
-};
-
-static bool get_cpu_id_from_dtb(enum AM_MESON_CPU_MAJOR_ID *pid_type, int *sub_id)
+static bool get_cpu_id_from_dtb(enum AM_MESON_CPU_MAJOR_ID *pidType)
 {
-	struct device_node *pnode = NULL;
-	struct platform_device *pdev = NULL;
-	const struct of_device_id *pmatch = NULL;
+	struct device_node *pNode = NULL;
+	struct platform_device* pDev = NULL;
+	const struct of_device_id *pMatch = NULL;
 
-	pnode = of_find_node_by_name(NULL, DECODE_CPU_VER_ID_NODE_NAME);
-	if (NULL == pnode) {
+	pNode = of_find_node_by_name(NULL, DECODE_CPU_VER_ID_NODE_NAME);
+	if (NULL == pNode) {
 		pr_err("No find node.\n");
 		return -EINVAL;
 	}
 
-	pdev =  of_find_device_by_node(pnode);
-	if (NULL == pdev)
+	pDev =  of_find_device_by_node(pNode);
+	if (NULL == pDev)
 		return -EINVAL;
 
-	pmatch = of_match_device(cpu_ver_of_match, &pdev->dev);
-	if (NULL == pmatch) {
-		pmatch = of_match_device(cpu_sub_id_of_match, &pdev->dev);
-		if (NULL == pmatch) {
-			pr_err("No find of_match_device\n");
-			return -EINVAL;
-		}
+	pMatch = of_match_device(cpu_ver_of_match, &pDev->dev);
+	if (NULL == pMatch) {
+		pr_err("No find of_match_device\n");
+		return -EINVAL;
 	}
 
-	*pid_type = (enum AM_MESON_CPU_MAJOR_ID)(*(int *)pmatch->data) & (MAJOY_ID_MASK);
-
-	*sub_id = ((*(int *)pmatch->data) & (SUB_ID_MASK)) >> 8;
+	*pidType = *(enum AM_MESON_CPU_MAJOR_ID *)pMatch->data;
 
 	return AM_SUCESS;
 }
@@ -210,20 +152,15 @@ static bool get_cpu_id_from_dtb(enum AM_MESON_CPU_MAJOR_ID *pid_type, int *sub_i
 static void initial_cpu_id(void)
 {
 	enum AM_MESON_CPU_MAJOR_ID id_type = AM_MESON_CPU_MAJOR_ID_MAX;
-	int sub_id = 0;
 
-	if (AM_SUCESS == get_cpu_id_from_dtb(&id_type, &sub_id)) {
+	if (AM_SUCESS == get_cpu_id_from_dtb(&id_type))
 		cpu_ver_id = id_type;
-		cpu_sub_id = sub_id;
-	} else {
+	else
 		cpu_ver_id = (enum AM_MESON_CPU_MAJOR_ID)get_cpu_type();
-		cpu_sub_id = (is_meson_rev_b()) ? CHIP_REVB : CHIP_REVA;
-	}
 
-	if ((AM_MESON_CPU_MAJOR_ID_G12B == cpu_ver_id) && (CHIP_REVB == cpu_sub_id))
-		cpu_ver_id = AM_MESON_CPU_MAJOR_ID_TL1;
-
-	pr_info("vdec init cpu id: 0x%x(%d)", cpu_ver_id, cpu_sub_id);
+	if (AM_MESON_CPU_MAJOR_ID_G12B == cpu_ver_id)
+		if (is_meson_rev_b())
+			cpu_ver_id = AM_MESON_CPU_MAJOR_ID_TL1;
 }
 
 enum AM_MESON_CPU_MAJOR_ID get_cpu_major_id(void)
@@ -235,32 +172,10 @@ enum AM_MESON_CPU_MAJOR_ID get_cpu_major_id(void)
 }
 EXPORT_SYMBOL(get_cpu_major_id);
 
-int get_cpu_sub_id(void)
-{
-	return cpu_sub_id;
-}
-EXPORT_SYMBOL(get_cpu_sub_id);
-
-bool is_cpu_meson_revb(void)
-{
-	if (AM_MESON_CPU_MAJOR_ID_MAX == cpu_ver_id)
-		initial_cpu_id();
-
-	return (cpu_sub_id == CHIP_REVB);
-}
-EXPORT_SYMBOL(is_cpu_meson_revb);
-
 bool is_cpu_tm2_revb(void)
 {
-	return ((get_cpu_major_id() == AM_MESON_CPU_MAJOR_ID_TM2)
-		&& (is_cpu_meson_revb()));
+	return ((get_cpu_major_id() == AM_MESON_CPU_MAJOR_ID_TM2) &&
+		(is_meson_rev_b()));
 }
 EXPORT_SYMBOL(is_cpu_tm2_revb);
-
-bool is_cpu_s4_s805x2(void)
-{
-	return ((get_cpu_major_id() == AM_MESON_CPU_MAJOR_ID_S4)
-		&& (get_cpu_sub_id() == CHIP_REVX));
-}
-EXPORT_SYMBOL(is_cpu_s4_s805x2);
 

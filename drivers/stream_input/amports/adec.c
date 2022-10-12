@@ -19,7 +19,6 @@
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/platform_device.h>
-#include <linux/of_platform.h>
 #include <linux/slab.h>
 #include <linux/uio_driver.h>
 #include <linux/amlogic/media/utils/aformat.h>
@@ -141,29 +140,20 @@ static ssize_t addr_offset_show(struct class *class,
 	return sprintf(buf, "%d\n", astream_dev->offset);
 }
 
-static CLASS_ATTR_RO(format);
-static CLASS_ATTR_RO(samplerate);
-static CLASS_ATTR_RO(channum);
-static CLASS_ATTR_RO(datawidth);
-static CLASS_ATTR_RO(pts);
-static CLASS_ATTR_RO(addr_offset);
-
-static struct attribute *astream_class_attrs[] = {
-	&class_attr_format.attr,
-	&class_attr_samplerate.attr,
-	&class_attr_channum.attr,
-	&class_attr_datawidth.attr,
-	&class_attr_pts.attr,
-	&class_attr_addr_offset.attr,
-	NULL
+static struct class_attribute astream_class_attrs[] = {
+	__ATTR_RO(format),
+	__ATTR_RO(samplerate),
+	__ATTR_RO(channum),
+	__ATTR_RO(datawidth),
+	__ATTR_RO(pts),
+	__ATTR_RO(addr_offset),
+	__ATTR_NULL
 };
-
-ATTRIBUTE_GROUPS(astream_class);
 
 static struct class astream_class = {
-	.name = "astream",
-	.class_groups = astream_class_groups,
-};
+		.name = "astream",
+		.class_attrs = astream_class_attrs,
+	};
 
 #if 1
 #define IO_CBUS_PHY_BASE 0xc1100000ULL
@@ -351,24 +341,23 @@ s32 astream_dev_register(void)
 		goto err_2;
 	}
 
-	if (AM_MESON_CPU_MAJOR_ID_TXL < get_cpu_major_id()) {
-		struct resource *res_mem;
-		struct platform_device *pdev;
-
-		node = of_find_node_by_path("/codec_io");
+	if (AM_MESON_CPU_MAJOR_ID_TXL < get_cpu_major_id()
+		&& MESON_CPU_MAJOR_ID_GXLX != get_cpu_type()) {
+		node = of_find_node_by_path("/codec_io/io_cbus_base");
 		if (!node) {
 			pr_info("No io_cbus_base node found.");
 			goto err_1;
 		}
 
-		pdev = of_find_device_by_node(node);
-		res_mem = platform_get_resource_byname(pdev, IORESOURCE_MEM, "cbus");
-		if (!res_mem) {
+#ifdef CONFIG_ARM64_A32
+		r = of_property_read_u32_index(node, "reg", 0, &cbus_base);
+#else
+		r = of_property_read_u32_index(node, "reg", 1, &cbus_base);
+#endif
+		if (r) {
 			pr_info("No find node.\n");
 			goto err_1;
 		}
-		cbus_base = res_mem->start;
-		of_node_put(node);
 
 		/*need to offset -0x100 in txlx.*/
 		astream_dev->offset = -0x100;
@@ -388,7 +377,7 @@ s32 astream_dev_register(void)
 			0x100)) & (PAGE_MASK);
 	}
 
-#if 1
+#ifdef CONFIG_UIO
 	if (uio_register_device(&astream_dev->dev, &astream_uio_info)) {
 		pr_info("astream UIO device register fail.\n");
 		r = -ENODEV;
@@ -415,7 +404,7 @@ err_3:
 void astream_dev_unregister(void)
 {
 	if (astream_dev) {
-#if 1
+#ifdef CONFIG_UIO
 		uio_unregister_device(&astream_uio_info);
 #endif
 
@@ -424,4 +413,3 @@ void astream_dev_unregister(void)
 		class_unregister(&astream_class);
 	}
 }
-

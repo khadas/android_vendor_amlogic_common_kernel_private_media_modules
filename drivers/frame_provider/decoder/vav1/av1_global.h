@@ -52,6 +52,13 @@
 #define AOMMIN(x, y) (((x) < (y)) ? (x) : (y))
 #define AOMMAX(x, y) (((x) > (y)) ? (x) : (y))
 
+//typedef char int8_t;
+//#ifndef BUFMGR_FOR_SIM
+typedef unsigned char uint8_t;
+//#endif
+typedef unsigned int uint32_t;
+//typedef int int32_t;
+//typedef long long int64_t;
 
 #ifdef AML
 #define AOM_AV1_MMU
@@ -101,12 +108,9 @@ typedef struct BuffInfo_s
 } BuffInfo_t;
 #endif
 
-#if 0
 #define va_start(v,l)   __builtin_va_start(v,l)
 #define va_end(v)       __builtin_va_end(v)
 #define va_arg(v,l)     __builtin_va_arg(v,l)
-#endif
-
 /*
 mem.h
 */
@@ -1318,9 +1322,10 @@ typedef struct PIC_BUFFER_CONFIG_s {
   int min_mv;
   int avg_mv;
 #endif
-  u64 timestamp;
-  u32 hw_decode_time;
-  u32 frame_size2; // For frame base mode
+	u32 hw_decode_time;
+	u32 frame_size2; // For frame base mode
+	bool vframe_bound;
+	u64 timestamp;
 } PIC_BUFFER_CONFIG;
 
 /*
@@ -1561,7 +1566,6 @@ typedef struct RefCntBuffer_s {
 
   FRAME_CONTEXT frame_context;
 #endif
-  int show_frame;
 } RefCntBuffer;
 
 typedef struct BufferPool_s {
@@ -2225,9 +2229,7 @@ typedef union param_u {
         unsigned short seg_lf_info_c[8];
 		unsigned short video_signal_type;
 		unsigned short color_description;
-		unsigned short mmu_used_num;
-		unsigned short dw_mmu_used_num;
-		unsigned short seq_flags_2;
+
         /*ucode end*/
         /*other*/
         unsigned short enable_superres;
@@ -2295,6 +2297,7 @@ void av1_bufmgr_ctx_reset(AV1Decoder *pbi, BufferPool *const pool, AV1_COMMON *c
 #define AV1_DEBUG_BUFMGR                   0x01
 #define AV1_DEBUG_BUFMGR_MORE              0x02
 #define AV1_DEBUG_BUFMGR_DETAIL            0x04
+#define AV1_DEBUG_TIMEOUT_INFO             0x08
 #define AV1_DEBUG_OUT_PTS                  0x10
 #define AOM_DEBUG_HW_MORE                  0x20
 #define AOM_DEBUG_VFRAME                   0x40

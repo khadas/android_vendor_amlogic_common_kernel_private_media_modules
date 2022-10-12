@@ -33,7 +33,7 @@
 #include "aml_vcodec_drv.h"
 #include "aml_vcodec_dec.h"
 #include "aml_vcodec_util.h"
-#include "aml_vcodec_vpp.h"
+#include "aml_vcodec_vfm.h"
 #include <linux/file.h>
 #include <linux/anon_inodes.h>
 
@@ -50,7 +50,6 @@
 
 bool param_sets_from_ucode = 1;
 bool enable_drm_mode;
-extern void aml_vdec_pic_info_update(struct aml_vcodec_ctx *ctx);
 
 static int fops_vcodec_open(struct file *file)
 {
@@ -63,17 +62,8 @@ static int fops_vcodec_open(struct file *file)
 	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
-	kref_init(&ctx->ctx_ref);
-
 	aml_buf = kzalloc(sizeof(*aml_buf), GFP_KERNEL);
 	if (!aml_buf) {
-		kfree(ctx);
-		return -ENOMEM;
-	}
-
-	ctx->meta_infos.meta_bufs = vzalloc(sizeof(struct meta_data) * V4L_CAP_BUFF_MAX);
-	if (ctx->meta_infos.meta_bufs == NULL) {
-		kfree(aml_buf);
 		kfree(ctx);
 		return -ENOMEM;
 	}
@@ -86,21 +76,13 @@ static int fops_vcodec_open(struct file *file)
 	v4l2_fh_add(&ctx->fh);
 	INIT_LIST_HEAD(&ctx->list);
 	INIT_LIST_HEAD(&ctx->vdec_thread_list);
-	INIT_LIST_HEAD(&ctx->task_chain_pool);
 	dev->filp = file;
 	ctx->dev = dev;
 	init_waitqueue_head(&ctx->queue);
-	mutex_init(&ctx->dmabuff_recycle_lock);
 	mutex_init(&ctx->state_lock);
-	mutex_init(&ctx->comp_lock);
+	mutex_init(&ctx->lock);
 	spin_lock_init(&ctx->slock);
-	spin_lock_init(&ctx->tsplock);
 	init_completion(&ctx->comp);
-	init_waitqueue_head(&ctx->wq);
-	init_waitqueue_head(&ctx->cap_wq);
-	INIT_WORK(&ctx->dmabuff_recycle_work, dmabuff_recycle_worker);
-	INIT_KFIFO(ctx->dmabuff_recycle);
-	INIT_KFIFO(ctx->capture_buffer);
 
 	ctx->param_sets_from_ucode = param_sets_from_ucode ? 1 : 0;
 
@@ -129,19 +111,9 @@ static int fops_vcodec_open(struct file *file)
 	ctx->output_thread_ready = true;
 	ctx->empty_flush_buf->vb.vb2_buf.vb2_queue = src_vq;
 	ctx->empty_flush_buf->lastframe = true;
-	ctx->vdec_pic_info_update = aml_vdec_pic_info_update;
 	aml_vcodec_dec_set_default_params(ctx);
-	ctx->is_stream_off = true;
 
-	ctx->aux_infos.dv_index = 0;
-	ctx->aux_infos.sei_index = 0;
-	ctx->aux_infos.alloc_buffer = aml_alloc_buffer;
-	ctx->aux_infos.free_buffer = aml_free_buffer;
-	ctx->aux_infos.bind_sei_buffer = aml_bind_sei_buffer;
-	ctx->aux_infos.bind_dv_buffer = aml_bind_dv_buffer;
-	ctx->aux_infos.free_one_sei_buffer = aml_free_one_sei_buffer;
-
-	ret = aml_thread_start(ctx, aml_thread_capture_worker, AML_THREAD_CAPTURE, "cap");
+	ret = aml_thread_start(ctx, try_to_capture, AML_THREAD_CAPTURE, "cap");
 	if (ret) {
 		v4l_dbg(ctx, V4L_DEBUG_CODEC_ERROR,
 			"Failed to creat capture thread.\n");
@@ -154,7 +126,7 @@ static int fops_vcodec_open(struct file *file)
 	v4l_dbg(ctx, V4L_DEBUG_CODEC_PRINFO, "%s decoder %lx\n",
 		dev_name(&dev->plat_dev->dev), (ulong)ctx);
 
-	return 0;
+	return ret;
 
 	/* Deinit when failure occurred */
 err_creat_thread:
@@ -164,7 +136,6 @@ err_m2m_ctx_init:
 err_ctrls_setup:
 	v4l2_fh_del(&ctx->fh);
 	v4l2_fh_exit(&ctx->fh);
-	vfree(ctx->meta_infos.meta_bufs);
 	kfree(ctx->empty_flush_buf);
 	kfree(ctx);
 	mutex_unlock(&dev->dev_mutex);
@@ -180,20 +151,24 @@ static int fops_vcodec_release(struct file *file)
 	v4l_dbg(ctx, V4L_DEBUG_CODEC_PRINFO, "release decoder %lx\n", (ulong) ctx);
 	mutex_lock(&dev->dev_mutex);
 
+	/*
+	 * Call v4l2_m2m_ctx_release before aml_vcodec_dec_release. First, it
+	 * makes sure the worker thread is not running after vdec_if_deinit.
+	 * Second, the decoder will be flushed and all the buffers will be
+	 * returned in stop_streaming.
+	 */
 	aml_thread_stop(ctx);
 	wait_vcodec_ending(ctx);
-	vb2_queue_release(&ctx->m2m_ctx->cap_q_ctx.q);
-	vb2_queue_release(&ctx->m2m_ctx->out_q_ctx.q);
-
+	v4l2_m2m_ctx_release(ctx->m2m_ctx);
 	aml_vcodec_dec_release(ctx);
+
 	v4l2_fh_del(&ctx->fh);
 	v4l2_fh_exit(&ctx->fh);
 	v4l2_ctrl_handler_free(&ctx->ctrl_hdl);
 
 	list_del_init(&ctx->list);
-
 	kfree(ctx->empty_flush_buf);
-	kref_put(&ctx->ctx_ref, aml_v4l_ctx_release);
+	kfree(ctx);
 	mutex_unlock(&dev->dev_mutex);
 	return 0;
 }
@@ -327,10 +302,8 @@ void* v4l_get_vf_handle(int fd)
 
 	if (!is_v4l2_buf_file(file)) {
 		fput(file);
-#if 0
 		v4l_dbg(0, V4L_DEBUG_CODEC_ERROR,
 			"the buf file checked fail!\n");
-#endif
 		return NULL;
 	}
 
@@ -442,43 +415,6 @@ static const struct v4l2_file_operations aml_vcodec_fops = {
 	.mmap		= v4l2_m2m_fop_mmap,
 };
 
-static ssize_t status_show(struct class *cls,
-	struct class_attribute *attr, char *buf)
-{
-	struct aml_vcodec_dev *dev = container_of(cls,
-		struct aml_vcodec_dev, v4ldec_class);
-	struct aml_vcodec_ctx *ctx = NULL;
-	char *pbuf = buf;
-
-	mutex_lock(&dev->dev_mutex);
-
-	if (list_empty(&dev->ctx_list)) {
-		pbuf += sprintf(pbuf, "No v4ldec context.\n");
-		goto out;
-	}
-
-	list_for_each_entry(ctx, &dev->ctx_list, list) {
-		/* basic information. */
-		aml_vdec_basic_information(ctx);
-
-		/* buffers status. */
-		aml_buffer_status(ctx);
-	}
-out:
-	mutex_unlock(&dev->dev_mutex);
-
-	return pbuf - buf;
-}
-
-static CLASS_ATTR_RO(status);
-
-static struct attribute *v4ldec_class_attrs[] = {
-	&class_attr_status.attr,
-	NULL
-};
-
-ATTRIBUTE_GROUPS(v4ldec_class);
-
 static int aml_vcodec_probe(struct platform_device *pdev)
 {
 	struct aml_vcodec_dev *dev;
@@ -491,7 +427,6 @@ static int aml_vcodec_probe(struct platform_device *pdev)
 
 	INIT_LIST_HEAD(&dev->ctx_list);
 	dev->plat_dev = pdev;
-	atomic_set(&dev->vpp_count, 0);
 
 	mutex_init(&dev->dec_mutex);
 	mutex_init(&dev->dev_mutex);
@@ -502,7 +437,8 @@ static int aml_vcodec_probe(struct platform_device *pdev)
 
 	ret = v4l2_device_register(&pdev->dev, &dev->v4l2_dev);
 	if (ret) {
-		dev_err(&pdev->dev, "v4l2_device_register err=%d\n", ret);
+		v4l_dbg(0, V4L_DEBUG_CODEC_ERROR,
+			"v4l2_device_register err=%d\n", ret);
 		goto err_res;
 	}
 
@@ -510,7 +446,8 @@ static int aml_vcodec_probe(struct platform_device *pdev)
 
 	vfd_dec = video_device_alloc();
 	if (!vfd_dec) {
-		dev_err(&pdev->dev, "Failed to allocate video device\n");
+		v4l_dbg(0, V4L_DEBUG_CODEC_ERROR,
+			"Failed to allocate video device\n");
 		ret = -ENOMEM;
 		goto err_dec_alloc;
 	}
@@ -522,7 +459,7 @@ static int aml_vcodec_probe(struct platform_device *pdev)
 	vfd_dec->v4l2_dev	= &dev->v4l2_dev;
 	vfd_dec->vfl_dir	= VFL_DIR_M2M;
 	vfd_dec->device_caps	= V4L2_CAP_VIDEO_M2M_MPLANE |
-					V4L2_CAP_STREAMING;
+				V4L2_CAP_STREAMING;
 
 	snprintf(vfd_dec->name, sizeof(vfd_dec->name), "%s",
 		AML_VCODEC_DEC_NAME);
@@ -532,16 +469,18 @@ static int aml_vcodec_probe(struct platform_device *pdev)
 
 	dev->m2m_dev_dec = v4l2_m2m_init(&aml_vdec_m2m_ops);
 	if (IS_ERR((__force void *)dev->m2m_dev_dec)) {
-		dev_err(&pdev->dev, "Failed to init mem2mem dec device\n");
+		v4l_dbg(0, V4L_DEBUG_CODEC_ERROR,
+			"Failed to init mem2mem dec device\n");
 		ret = PTR_ERR((__force void *)dev->m2m_dev_dec);
 		goto err_dec_mem_init;
 	}
 
 	dev->decode_workqueue =
-		alloc_ordered_workqueue("output-worker",
-			__WQ_LEGACY | WQ_MEM_RECLAIM | WQ_HIGHPRI);
+		alloc_ordered_workqueue(AML_VCODEC_DEC_NAME,
+			WQ_MEM_RECLAIM | WQ_FREEZABLE);
 	if (!dev->decode_workqueue) {
-		dev_err(&pdev->dev, "Failed to create decode workqueue\n");
+		v4l_dbg(0, V4L_DEBUG_CODEC_ERROR,
+			"Failed to create decode workqueue\n");
 		ret = -EINVAL;
 		goto err_event_workq;
 	}
@@ -550,26 +489,16 @@ static int aml_vcodec_probe(struct platform_device *pdev)
 
 	ret = video_register_device(vfd_dec, VFL_TYPE_GRABBER, 26);
 	if (ret) {
-		dev_err(&pdev->dev, "Failed to register video device\n");
+		v4l_dbg(0, V4L_DEBUG_CODEC_ERROR,
+			"Failed to register video device\n");
 		goto err_dec_reg;
 	}
 
-	/*init class*/
-	dev->v4ldec_class.name = "v4ldec";
-	dev->v4ldec_class.owner = THIS_MODULE;
-	dev->v4ldec_class.class_groups = v4ldec_class_groups;
-	ret = class_register(&dev->v4ldec_class);
-	if (ret) {
-		dev_err(&pdev->dev, "v4l dec class create fail.\n");
-		goto err_reg_class;
-	}
-
-	dev_info(&pdev->dev, "v4ldec registered as /dev/video%d\n", vfd_dec->num);
+	v4l_dbg(0, V4L_DEBUG_CODEC_PRINFO,
+		"decoder registered as /dev/video%d\n", vfd_dec->num);
 
 	return 0;
 
-err_reg_class:
-	class_unregister(&dev->v4ldec_class);
 err_dec_reg:
 	destroy_workqueue(dev->decode_workqueue);
 err_event_workq:
@@ -583,14 +512,19 @@ err_res:
 	return ret;
 }
 
+static const struct of_device_id aml_vcodec_match[] = {
+	{.compatible = "amlogic, vcodec-dec",},
+	{},
+};
+
+MODULE_DEVICE_TABLE(of, aml_vcodec_match);
+
 static int aml_vcodec_dec_remove(struct platform_device *pdev)
 {
 	struct aml_vcodec_dev *dev = platform_get_drvdata(pdev);
 
 	flush_workqueue(dev->decode_workqueue);
 	destroy_workqueue(dev->decode_workqueue);
-
-	class_unregister(&dev->v4ldec_class);
 
 	if (dev->m2m_dev_dec)
 		v4l2_m2m_release(dev->m2m_dev_dec);
@@ -600,17 +534,12 @@ static int aml_vcodec_dec_remove(struct platform_device *pdev)
 
 	v4l2_device_unregister(&dev->v4l2_dev);
 
-	dev_info(&pdev->dev, "v4ldec removed.\n");
-
 	return 0;
 }
 
-static const struct of_device_id aml_vcodec_match[] = {
-	{.compatible = "amlogic, vcodec-dec",},
-	{},
-};
-
-MODULE_DEVICE_TABLE(of, aml_vcodec_match);
+/*static void aml_vcodec_dev_release(struct device *dev)
+{
+}*/
 
 static struct platform_driver aml_vcodec_dec_driver = {
 	.probe	= aml_vcodec_probe,
@@ -621,27 +550,39 @@ static struct platform_driver aml_vcodec_dec_driver = {
 	},
 };
 
+/*
+static struct platform_device aml_vcodec_dec_device = {
+	.name		= AML_VCODEC_DEC_NAME,
+	.dev.release	= aml_vcodec_dev_release,
+};*/
+
+module_platform_driver(aml_vcodec_dec_driver);
+
+/*
 static int __init amvdec_ports_init(void)
 {
-	pr_info("v4l dec module init\n");
+	int ret;
 
-	if (platform_driver_register(&aml_vcodec_dec_driver)) {
-		pr_err("failed to register v4l dec driver\n");
-		return -ENODEV;
-	}
+	ret = platform_device_register(&aml_vcodec_dec_device);
+	if (ret)
+		return ret;
 
-	return 0;
+	ret = platform_driver_register(&aml_vcodec_dec_driver);
+	if (ret)
+		platform_device_unregister(&aml_vcodec_dec_device);
+
+	return ret;
 }
 
 static void __exit amvdec_ports_exit(void)
 {
-	pr_info("v4l dec module exit\n");
-
 	platform_driver_unregister(&aml_vcodec_dec_driver);
+	platform_device_unregister(&aml_vcodec_dec_device);
 }
 
 module_init(amvdec_ports_init);
 module_exit(amvdec_ports_exit);
+*/
 
 u32 debug_mode;
 EXPORT_SYMBOL(debug_mode);
@@ -675,71 +616,19 @@ bool multiplanar;
 EXPORT_SYMBOL(multiplanar);
 module_param(multiplanar, bool, 0644);
 
-int dump_capture_frame;
+bool dump_capture_frame;
 EXPORT_SYMBOL(dump_capture_frame);
-module_param(dump_capture_frame, int, 0644);
-
-int dump_vpp_input;
-EXPORT_SYMBOL(dump_vpp_input);
-module_param(dump_vpp_input, int, 0644);
-
-int dump_ge2d_input;
-EXPORT_SYMBOL(dump_ge2d_input);
-module_param(dump_ge2d_input, int, 0644);
+module_param(dump_capture_frame, bool, 0644);
 
 int dump_output_frame;
 EXPORT_SYMBOL(dump_output_frame);
 module_param(dump_output_frame, int, 0644);
-
-u32 dump_output_start_position;
-EXPORT_SYMBOL(dump_output_start_position);
-module_param(dump_output_start_position, uint, 0644);
 
 EXPORT_SYMBOL(param_sets_from_ucode);
 module_param(param_sets_from_ucode, bool, 0644);
 
 EXPORT_SYMBOL(enable_drm_mode);
 module_param(enable_drm_mode, bool, 0644);
-
-int bypass_vpp;
-EXPORT_SYMBOL(bypass_vpp);
-module_param(bypass_vpp, int, 0644);
-
-int bypass_ge2d;
-EXPORT_SYMBOL(bypass_ge2d);
-module_param(bypass_ge2d, int, 0644);
-
-int max_di_instance = 2;
-EXPORT_SYMBOL(max_di_instance);
-module_param(max_di_instance, int, 0644);
-
-int bypass_progressive = 1;
-EXPORT_SYMBOL(bypass_progressive);
-module_param(bypass_progressive, int, 0644);
-
-bool support_mjpeg;
-EXPORT_SYMBOL(support_mjpeg);
-module_param(support_mjpeg, bool, 0644);
-
-bool support_format_I420;
-EXPORT_SYMBOL(support_format_I420);
-module_param(support_format_I420, bool, 0644);
-
-int force_enable_nr;
-EXPORT_SYMBOL(force_enable_nr);
-module_param(force_enable_nr, int, 0644);
-
-int force_enable_di_local_buffer;
-EXPORT_SYMBOL(force_enable_di_local_buffer);
-module_param(force_enable_di_local_buffer, int, 0644);
-
-int vpp_bypass_frames;
-EXPORT_SYMBOL(vpp_bypass_frames);
-module_param(vpp_bypass_frames, int, 0644);
-
-int bypass_nr_flag;
-EXPORT_SYMBOL(bypass_nr_flag);
-module_param(bypass_nr_flag, int, 0644);
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("AML video codec V4L2 decoder driver");

@@ -21,6 +21,21 @@
 #include <media/v4l2-mem2mem.h>
 #include <linux/printk.h>
 
+int vdec_v4l_get_buffer(struct aml_vcodec_ctx *ctx,
+	struct vdec_v4l2_buffer **out)
+{
+	int ret = -1;
+
+	if (ctx->drv_handle == 0)
+		return -EIO;
+
+	ret = ctx->dec_if->get_param(ctx->drv_handle,
+		GET_PARAM_FREE_FRAME_BUFFER, out);
+
+	return ret;
+}
+EXPORT_SYMBOL(vdec_v4l_get_buffer);
+
 int vdec_v4l_get_pic_info(struct aml_vcodec_ctx *ctx,
 	struct vdec_pic_info *pic)
 {
@@ -35,21 +50,6 @@ int vdec_v4l_get_pic_info(struct aml_vcodec_ctx *ctx,
 	return ret;
 }
 EXPORT_SYMBOL(vdec_v4l_get_pic_info);
-
-int vdec_v4l_set_cfg_infos(struct aml_vcodec_ctx *ctx,
-	struct aml_vdec_cfg_infos *cfg)
-{
-	int ret = 0;
-
-	if (ctx->drv_handle == 0)
-		return -EIO;
-
-	ret = ctx->dec_if->set_param(ctx->drv_handle,
-		SET_PARAM_CFG_INFO, cfg);
-
-	return ret;
-}
-EXPORT_SYMBOL(vdec_v4l_set_cfg_infos);
 
 int vdec_v4l_set_ps_infos(struct aml_vcodec_ctx *ctx,
 	struct aml_vdec_ps_infos *ps)
@@ -66,22 +66,6 @@ int vdec_v4l_set_ps_infos(struct aml_vcodec_ctx *ctx,
 }
 EXPORT_SYMBOL(vdec_v4l_set_ps_infos);
 
-int vdec_v4l_set_comp_buf_info(struct aml_vcodec_ctx *ctx,
-		struct vdec_comp_buf_info *info)
-{
-	int ret = 0;
-
-	if (ctx->drv_handle == 0)
-		return -EIO;
-
-	ret = ctx->dec_if->set_param(ctx->drv_handle,
-		SET_PARAM_COMP_BUF_INFO, info);
-
-	return ret;
-
-}
-EXPORT_SYMBOL(vdec_v4l_set_comp_buf_info);
-
 int vdec_v4l_set_hdr_infos(struct aml_vcodec_ctx *ctx,
 	struct aml_vdec_hdr_infos *hdr)
 {
@@ -97,10 +81,50 @@ int vdec_v4l_set_hdr_infos(struct aml_vcodec_ctx *ctx,
 }
 EXPORT_SYMBOL(vdec_v4l_set_hdr_infos);
 
+static void aml_wait_dpb_ready(struct aml_vcodec_ctx *ctx)
+{
+	ulong expires;
+
+	expires = jiffies + msecs_to_jiffies(1000);
+	while (!ctx->v4l_codec_dpb_ready) {
+		u32 ready_num = 0;
+
+		if (time_after(jiffies, expires)) {
+			pr_err("the DPB state has not ready.\n");
+			break;
+		}
+
+		ready_num = v4l2_m2m_num_dst_bufs_ready(ctx->m2m_ctx);
+		if ((ready_num + ctx->buf_used_count) >= ctx->dpb_size)
+			ctx->v4l_codec_dpb_ready = true;
+	}
+}
+
 void aml_vdec_pic_info_update(struct aml_vcodec_ctx *ctx)
 {
-	if (ctx != NULL)
-		ctx->vdec_pic_info_update(ctx);
+	unsigned int dpbsize = 0;
+	int ret;
+
+	if (ctx->dec_if->get_param(ctx->drv_handle, GET_PARAM_PIC_INFO, &ctx->last_decoded_picinfo)) {
+		pr_err("Cannot get param : GET_PARAM_PICTURE_INFO ERR\n");
+		return;
+	}
+
+	if (ctx->last_decoded_picinfo.visible_width == 0 ||
+		ctx->last_decoded_picinfo.visible_height == 0 ||
+		ctx->last_decoded_picinfo.coded_width == 0 ||
+		ctx->last_decoded_picinfo.coded_height == 0) {
+		pr_err("Cannot get correct pic info\n");
+		return;
+	}
+
+	ret = ctx->dec_if->get_param(ctx->drv_handle, GET_PARAM_DPB_SIZE, &dpbsize);
+	if (dpbsize == 0)
+		pr_err("Incorrect dpb size, ret=%d\n", ret);
+
+	/* update picture information */
+	ctx->dpb_size = dpbsize;
+	ctx->picinfo = ctx->last_decoded_picinfo;
 }
 
 int vdec_v4l_post_evet(struct aml_vcodec_ctx *ctx, u32 event)
@@ -121,10 +145,12 @@ EXPORT_SYMBOL(vdec_v4l_post_evet);
 int vdec_v4l_res_ch_event(struct aml_vcodec_ctx *ctx)
 {
 	int ret = 0;
-	struct aml_vcodec_dev *dev = ctx->dev;
 
 	if (ctx->drv_handle == 0)
 		return -EIO;
+
+	/* wait the DPB state to be ready. */
+	aml_wait_dpb_ready(ctx);
 
 	aml_vdec_pic_info_update(ctx);
 
@@ -136,10 +162,10 @@ int vdec_v4l_res_ch_event(struct aml_vcodec_ctx *ctx)
 
 	mutex_unlock(&ctx->state_lock);
 
-	while (ctx->m2m_ctx->job_flags & TRANS_RUNNING) {
-		v4l2_m2m_job_pause(dev->m2m_dev_dec, ctx->m2m_ctx);
-	}
-
+	ctx->q_data[AML_Q_DATA_SRC].resolution_changed = true;
+#ifdef CONFIG_V4L2_MEM2MEM_DEV
+	v4l2_m2m_job_pause(ctx->dev->m2m_dev_dec, ctx->m2m_ctx);
+#endif
 	return ret;
 }
 EXPORT_SYMBOL(vdec_v4l_res_ch_event);
@@ -159,17 +185,3 @@ int vdec_v4l_write_frame_sync(struct aml_vcodec_ctx *ctx)
 }
 EXPORT_SYMBOL(vdec_v4l_write_frame_sync);
 
-int vdec_v4l_get_dw_mode(struct aml_vcodec_ctx *ctx,
-	unsigned int *dw_mode)
-{
-	int ret = -1;
-
-	if (ctx->drv_handle == 0)
-		return -EIO;
-
-	ret = ctx->dec_if->get_param(ctx->drv_handle,
-		GET_PARAM_DW_MODE, dw_mode);
-
-	return ret;
-}
-EXPORT_SYMBOL(vdec_v4l_get_dw_mode);

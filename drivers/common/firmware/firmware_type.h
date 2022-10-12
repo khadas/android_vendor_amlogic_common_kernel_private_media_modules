@@ -80,7 +80,6 @@
 #define OPTEE_VDEC_LEGENCY		(0)
 #define OPTEE_VDEC			(1)
 #define OPTEE_VDEC_HEVC			(2)
-#define OPTEE_VDEC_HCDEC			(3)
 
 struct format_name_s {
 	unsigned int format;

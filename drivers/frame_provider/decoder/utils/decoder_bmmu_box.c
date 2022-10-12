@@ -324,7 +324,7 @@ void *decoder_bmmu_box_get_virt_addr(void *box_handle, int idx)
 }
 
 /*flags: &0x1 for wait,*/
-int decoder_bmmu_box_check_and_wait_size(int size, int flags, int mem_flags)
+int decoder_bmmu_box_check_and_wait_size(int size, int flags)
 {
 	if ((flags & BMMU_ALLOC_FLAGS_CAN_CLEAR_KEEPER) &&
 		codec_mm_get_free_size() < size) {
@@ -335,7 +335,7 @@ int decoder_bmmu_box_check_and_wait_size(int size, int flags, int mem_flags)
 	}
 
 	return codec_mm_enough_for_size(size,
-			flags & BMMU_ALLOC_FLAGS_WAIT, mem_flags);
+			flags & BMMU_ALLOC_FLAGS_WAIT);
 }
 
 int decoder_bmmu_box_alloc_idx_wait(
@@ -361,8 +361,7 @@ int decoder_bmmu_box_alloc_idx_wait(
 	}
 	have_space = decoder_bmmu_box_check_and_wait_size(
 					size,
-					wait_flags,
-					mem_flags);
+					wait_flags);
 	if (have_space) {
 		ret = decoder_bmmu_box_alloc_idx(handle,
 				idx, size, aligned_2n, mem_flags);
@@ -383,14 +382,13 @@ int decoder_bmmu_box_alloc_buf_phy(
 	int size, unsigned char *driver_name,
 	unsigned long *buf_phy_addr)
 {
-	struct decoder_bmmu_box *bmmu_box = (struct decoder_bmmu_box *)handle;
 
-	if (bmmu_box == NULL)
+	if (handle == NULL)
 		return -EINVAL;
 
 	if (!decoder_bmmu_box_check_and_wait_size(
 			size,
-			1, bmmu_box->mem_flags)) {
+			1)) {
 		pr_info("%s not enough buf for buf_idx = %d\n",
 					driver_name, idx);
 		return	-ENOMEM;
@@ -400,8 +398,9 @@ int decoder_bmmu_box_alloc_buf_phy(
 			idx,
 			size,
 			-1,
-			bmmu_box->mem_flags,
-			BMMU_ALLOC_FLAGS_WAITCLEAR)) {
+			-1,
+			BMMU_ALLOC_FLAGS_WAITCLEAR
+			)) {
 		*buf_phy_addr =
 			decoder_bmmu_box_get_phy_addr(
 			handle,
@@ -438,6 +437,7 @@ int decoder_bmmu_box_add_callback_func(
 }
 EXPORT_SYMBOL(decoder_bmmu_box_add_callback_func);
 
+
 static int decoder_bmmu_box_dump(struct decoder_bmmu_box *box, void *buf,
 								 int size)
 {
@@ -446,7 +446,6 @@ static int decoder_bmmu_box_dump(struct decoder_bmmu_box *box, void *buf,
 	int tsize = 0;
 	int s;
 	int i;
-
 	if (!buf) {
 		pbuf = sbuf;
 		size = 512;
@@ -491,7 +490,6 @@ static int decoder_bmmu_box_dump_all(void *buf, int size)
 	int s;
 	int i;
 	struct list_head *head, *list;
-
 	if (!buf) {
 		pbuf = sbuf;
 		size = 512;
@@ -549,7 +547,7 @@ static ssize_t box_dump_show(struct class *class, struct class_attribute *attr,
 	return ret;
 }
 
-static ssize_t debug_show(struct class *class,
+static ssize_t box_debug_show(struct class *class,
 		struct class_attribute *attr,
 		char *buf)
 {
@@ -563,7 +561,8 @@ static ssize_t debug_show(struct class *class,
 	return size;
 }
 
-static ssize_t debug_store(struct class *class,
+
+static ssize_t box_debug_store(struct class *class,
 		struct class_attribute *attr,
 		const char *buf, size_t size)
 {
@@ -584,21 +583,19 @@ static ssize_t debug_store(struct class *class,
 
 }
 
-static CLASS_ATTR_RO(box_dump);
-static CLASS_ATTR_RW(debug);
 
-static struct attribute *decoder_bmmu_box_class_attrs[] = {
-	&class_attr_box_dump.attr,
-	&class_attr_debug.attr,
-	NULL
+
+static struct class_attribute decoder_bmmu_box_class_attrs[] = {
+	__ATTR_RO(box_dump),
+	__ATTR(debug, S_IRUGO | S_IWUSR | S_IWGRP,
+		box_debug_show, box_debug_store),
+	__ATTR_NULL
 };
-
-ATTRIBUTE_GROUPS(decoder_bmmu_box_class);
 
 static struct class decoder_bmmu_box_class = {
-	.name = "decoder_bmmu_box",
-	.class_groups = decoder_bmmu_box_class_groups,
-};
+		.name = "decoder_bmmu_box",
+		.class_attrs = decoder_bmmu_box_class_attrs,
+	};
 
 int decoder_bmmu_box_init(void)
 {

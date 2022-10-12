@@ -27,7 +27,7 @@
 #include <linux/slab.h>
 
 #include <linux/amlogic/media/utils/vformat.h>
-#include <linux/amlogic/media/registers/cpu_version.h>
+#include <linux/amlogic/cpu_version.h>
 #include "../../../stream_input/amports/amports_priv.h"
 #include "../../../frame_provider/decoder/utils/vdec.h"
 #include "../../chips/chips.h"
@@ -311,20 +311,6 @@ int get_clk_with_source(int format, int w_x_h_fps)
 }
 EXPORT_SYMBOL(get_clk_with_source);
 
-bool is_hevc_front_back_clk_combined(void)
-{
-	int cpu_id = get_cpu_major_id();
-
-	if (cpu_id == AM_MESON_CPU_MAJOR_ID_T5 ||
-		(cpu_id == AM_MESON_CPU_MAJOR_ID_T5D) ||
-		(cpu_id == AM_MESON_CPU_MAJOR_ID_S4) ||
-		(cpu_id == AM_MESON_CPU_MAJOR_ID_S4D))
-		return true;
-
-	return false;
-}
-EXPORT_SYMBOL(is_hevc_front_back_clk_combined);
-
 int vdec_source_changed_for_clk_set(int format, int width, int height, int fps)
 {
 	int clk = get_clk_with_source(format, width * height * fps);
@@ -352,8 +338,7 @@ int vdec_source_changed_for_clk_set(int format, int width, int height, int fps)
 		|| format == VFORMAT_AV1) {
 		ret_clk = hevc_clock_set(clk);
 		clock_source_wxhxfps_saved[VDEC_HEVC] = width * height * fps;
-		if (get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_G12A &&
-			!is_hevc_front_back_clk_combined()) {
+		if (get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_G12A) {
 			ret_clk = hevc_back_clock_set(clk);
 			clock_source_wxhxfps_saved[VDEC_HEVCB] = width * height * fps;
 		}
@@ -387,7 +372,7 @@ static int register_vdec_clk_mgr_per_cpu(int cputype,
 		 */
 		return 0;	/* ignore don't needed firmare. */
 	}
-	mgr = kmalloc(sizeof(struct chip_vdec_clk_s), GFP_KERNEL);
+	mgr = vzalloc(sizeof(struct chip_vdec_clk_s));
 	if (!mgr)
 		return -ENOMEM;
 	*mgr = *t_mgr;
@@ -396,7 +381,7 @@ static int register_vdec_clk_mgr_per_cpu(int cputype,
 	 */
 	if (mgr->clock_init) {
 		if (mgr->clock_init()) {
-			kfree(mgr);
+			vfree(mgr);
 			return -ENOMEM;
 		}
 	}
@@ -419,7 +404,7 @@ EXPORT_SYMBOL(register_vdec_clk_mgr);
 
 int unregister_vdec_clk_mgr(enum vdec_type_e vdec_type)
 {
-	kfree(get_current_vdec_chip()->clk_mgr[vdec_type]);
+	vfree(get_current_vdec_chip()->clk_mgr[vdec_type]);
 
 	return 0;
 }
@@ -438,7 +423,7 @@ static int register_vdec_clk_setting_per_cpu(int cputype,
 		 */
 		return 0;	/* ignore don't needed this setting . */
 	}
-	p_setting = kmalloc(size, GFP_KERNEL);
+	p_setting = vzalloc(size);
 	if (!p_setting)
 		return -ENOMEM;
 	memcpy(p_setting, setting, size);
@@ -464,7 +449,7 @@ EXPORT_SYMBOL(register_vdec_clk_setting);
 
 int unregister_vdec_clk_setting(void)
 {
-	kfree(get_current_vdec_chip()->clk_setting_array);
+	vfree(get_current_vdec_chip()->clk_setting_array);
 
 	return 0;
 }

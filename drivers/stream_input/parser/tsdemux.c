@@ -29,7 +29,6 @@
 #include <linux/amlogic/media/vfm/vframe_provider.h>
 #include <linux/device.h>
 #include <linux/delay.h>
-#include <linux/module.h>
 
 #include <linux/uaccess.h>
 /* #include <mach/am_regs.h> */
@@ -51,10 +50,6 @@
 
 #define MAX_DRM_PACKAGE_SIZE 0x500000
 
-
-MODULE_PARM_DESC(reset_demux_enable, "\n\t\t Reset demux enable");
-static int reset_demux_enable = 0;
-module_param(reset_demux_enable, int, 0644);
 
 static const char tsdemux_fetch_id[] = "tsdemux-fetch-id";
 static const char tsdemux_irq_id[] = "tsdemux-irq-id";
@@ -408,6 +403,7 @@ static int reset_pcr_regs(void)
 {
 	u32 pcr_num;
 	u32 pcr_regs = 0;
+
 	if (curr_pcr_id >= 0x1FFF)
 		return 0;
 	/* set paramater to fetch pcr */
@@ -1034,25 +1030,21 @@ int get_discontinue_counter(void)
 }
 EXPORT_SYMBOL(get_discontinue_counter);
 
-static ssize_t discontinue_counter_show(struct class *class,
+static ssize_t show_discontinue_counter(struct class *class,
 		struct class_attribute *attr, char *buf)
 {
 	return sprintf(buf, "%d\n", discontinued_counter);
 }
 
-static CLASS_ATTR_RO(discontinue_counter);
-
-static struct attribute *tsdemux_class_attrs[] = {
-	&class_attr_discontinue_counter.attr,
-	NULL
+static struct class_attribute tsdemux_class_attrs[] = {
+	__ATTR(discontinue_counter, S_IRUGO, show_discontinue_counter, NULL),
+	__ATTR_NULL
 };
-
-ATTRIBUTE_GROUPS(tsdemux_class);
 
 static struct class tsdemux_class = {
-	.name = "tsdemux",
-	.class_groups = tsdemux_class_groups,
-};
+		.name = "tsdemux",
+		.class_attrs = tsdemux_class_attrs,
+	};
 
 int tsdemux_class_register(void)
 {
@@ -1078,7 +1070,9 @@ void tsdemux_change_avid(unsigned int vid, unsigned int aid)
 		WRITE_DEMUX_REG(FM_WR_ADDR, 0x8000);
 		while (READ_DEMUX_REG(FM_WR_ADDR) & 0x8000)
 			;
-	} else {
+	}
+	else
+	{
 		if (curr_vid_id != vid) {
 			tsdemux_set_vid(vid);
 			curr_vid_id = vid;
@@ -1136,8 +1130,6 @@ void tsdemux_audio_reset(void)
 	if (demux_ops && demux_ops->hw_dmx_unlock)
 		demux_ops->hw_dmx_unlock(xflags);
 	spin_unlock_irqrestore(&demux_ops_lock, flags);
-	if (reset_demux_enable == 1)
-		tsdemux_reset();
 }
 
 void tsdemux_sub_reset(void)

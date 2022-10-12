@@ -23,14 +23,14 @@
 #include <linux/types.h>
 #include <linux/dma-direction.h>
 #include <linux/amlogic/media/codec_mm/codec_mm.h>
-/*
+
 typedef unsigned long long	u64;
 typedef signed long long	s64;
 typedef unsigned int		u32;
 typedef unsigned short int	u16;
 typedef short int		s16;
 typedef unsigned char		u8;
-*/
+
 #define CODEC_MODE(a, b, c, d)\
 	(((u8)(a) << 24) | ((u8)(b) << 16) | ((u8)(c) << 8) | (u8)(d))
 
@@ -45,9 +45,8 @@ struct aml_vcodec_mem {
 	u32	bytes_used;
 	u32	offset;
 	u64	timestamp;
+	dma_addr_t dma_addr;
 	u32	model;
-	ulong	meta_ptr;
-	struct dma_buf *dbuf;
 };
 
 struct aml_vcodec_ctx;
@@ -70,11 +69,6 @@ extern u32 debug_mode;
 #define V4L_DEBUG_CODEC_PARSER	(1 << 6)
 #define V4L_DEBUG_CODEC_PROT	(1 << 7)
 #define V4L_DEBUG_CODEC_EXINFO	(1 << 8)
-#define V4L_DEBUG_VPP_BUFMGR	(1 << 9)
-#define V4L_DEBUG_VPP_DETAIL	(1 << 10)
-#define V4L_DEBUG_TASK_CHAIN	(1 << 11)
-#define V4L_DEBUG_GE2D_BUFMGR	(1 << 12)
-#define V4L_DEBUG_GE2D_DETAIL	(1 << 13)
 
 #define __v4l_dbg(h, id, fmt, args...)					\
 	do {								\
@@ -98,6 +92,12 @@ extern u32 debug_mode;
 		}								\
 	} while (0)
 
+void __iomem *aml_vcodec_get_reg_addr(struct aml_vcodec_ctx *data,
+				unsigned int reg_idx);
+int aml_vcodec_mem_alloc(struct aml_vcodec_ctx *data,
+				struct aml_vcodec_mem *mem);
+void aml_vcodec_mem_free(struct aml_vcodec_ctx *data,
+				struct aml_vcodec_mem *mem);
 void aml_vcodec_set_curr_ctx(struct aml_vcodec_dev *dev,
 	struct aml_vcodec_ctx *ctx);
 struct aml_vcodec_ctx *aml_vcodec_get_curr_ctx(struct aml_vcodec_dev *dev);

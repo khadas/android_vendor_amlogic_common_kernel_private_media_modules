@@ -65,7 +65,7 @@
 #define H264_OUTPUT_MODE_NORMAL 0x4
 #define H264_OUTPUT_MODE_FAST   0x8
 
-//#define FALSE 0
+#define FALSE 0
 
 #define H264_SLICE_HEAD_DONE         0x01
 #define H264_PIC_DATA_DONE          0x02
@@ -824,7 +824,7 @@ struct FrameStore {
 	u32 hw_decode_time;
 	u32 frame_size2; // For recording the chunk->size in frame mode
 	bool show_frame;
-	struct dma_fence *fence;
+	struct fence *fence;
 	u32 decoded_frame_size;
 };
 

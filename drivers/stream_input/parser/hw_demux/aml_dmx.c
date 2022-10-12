@@ -50,7 +50,6 @@
 #include "c_stb_regs_define.h"
 #include "aml_dvb.h"
 #include "aml_dvb_reg.h"
-#include <linux/sched/signal.h>
 
 
 #define ENABLE_SEC_BUFF_WATCHDOG
@@ -503,9 +502,9 @@ static int asyncfifo_buf_len = ASYNCFIFO_BUFFER_SIZE_DEFAULT;
 
 
 /*Section buffer watchdog*/
-static void section_buffer_watchdog_func(struct timer_list * timer)
+static void section_buffer_watchdog_func(unsigned long arg)
 {
-	struct aml_dvb *dvb = from_timer(dvb,timer,watchdog_timer);
+	struct aml_dvb *dvb = (struct aml_dvb *)arg;
 	struct aml_dmx *dmx;
 	u32 section_busy32 = 0, om_cmd_status32 = 0,
 	    demux_channel_activity32 = 0;
@@ -756,7 +755,7 @@ static void section_notify(struct aml_dmx *dmx, struct aml_filter *f, u8 *p)
 	struct dvb_demux_feed *feed = dmx->channel[f->chan_id].feed;
 
 	if (feed && feed->cb.sec)
-		feed->cb.sec(p, sec_len, NULL, 0, f->filter,0);
+		feed->cb.sec(p, sec_len, NULL, 0, f->filter);
 }
 
 static void hardware_match_section(struct aml_dmx *dmx,
@@ -1212,7 +1211,7 @@ static void process_sub(struct aml_dmx *dmx)
 		{
 			dmx->channel[2].feed->cb.ts(buffer1_virt, len1,
 						buffer2_virt, len2,
-						&dmx->channel[2].feed->feed.ts,0);
+						&dmx->channel[2].feed->feed.ts);
 		}
 	}
 	WRITE_MPEG_REG(PARSER_SUB_RP, rd_ptr);
@@ -1273,7 +1272,7 @@ static void process_pes(struct aml_dmx *dmx)
 				if (ch->feed->ts_type & TS_PAYLOAD_ONLY) {
 					ch->feed->cb.ts(buffer1,
 						len1, buffer2, len2,
-						&ch->feed->feed.ts,0);
+						&ch->feed->feed.ts);
 				}
 			}
 		}
@@ -1469,7 +1468,7 @@ static void dvr_process_channel(struct aml_asyncfifo *afifo,
 			channel->dvr_feed->cb.ts(
 					(u8 *)afifo->pages+afifo->buf_read*size,
 					cnt*size, NULL, 0,
-					&channel->dvr_feed->feed.ts,0);
+					&channel->dvr_feed->feed.ts);
 		} else {
 			blk.addr = afifo->blk.addr+afifo->buf_read*size;
 			blk.len = cnt*size;
@@ -1482,7 +1481,7 @@ static void dvr_process_channel(struct aml_asyncfifo *afifo,
 					(u8 *)&blk,
 					sizeof(struct aml_dvr_block),
 					NULL, 0,
-					&channel->dvr_feed->feed.ts,0);
+					&channel->dvr_feed->feed.ts);
 			}
 		}
 		afifo->buf_read = 0;
@@ -1504,7 +1503,7 @@ static void dvr_process_channel(struct aml_asyncfifo *afifo,
 			channel->dvr_feed->cb.ts(
 					(u8 *)afifo->pages+afifo->buf_read*size,
 					cnt*size, NULL, 0,
-				&channel->dvr_feed->feed.ts,0);
+				&channel->dvr_feed->feed.ts);
 			}
 		} else {
 			blk.addr = afifo->blk.addr+afifo->buf_read*size;
@@ -1518,7 +1517,7 @@ static void dvr_process_channel(struct aml_asyncfifo *afifo,
 					(u8 *)&blk,
 					sizeof(struct aml_dvr_block),
 					NULL, 0,
-					&channel->dvr_feed->feed.ts,0);
+					&channel->dvr_feed->feed.ts);
 			}
 		}
 		afifo->buf_read = afifo->buf_toggle;
@@ -3018,9 +3017,13 @@ static int dmx_init(struct aml_dmx *dmx)
 		return -1;
 	/*Reset the hardware */
 	if (!dvb->dmx_init) {
-		timer_setup(&dvb->watchdog_timer, section_buffer_watchdog_func,0);
+		init_timer(&dvb->watchdog_timer);
+		dvb->watchdog_timer.function = section_buffer_watchdog_func;
+		dvb->watchdog_timer.expires =
+		    jiffies + msecs_to_jiffies(WATCHDOG_TIMER);
+		dvb->watchdog_timer.data = (unsigned long)dvb;
 #ifdef ENABLE_SEC_BUFF_WATCHDOG
-		mod_timer(&dvb->watchdog_timer,jiffies + msecs_to_jiffies(WATCHDOG_TIMER));
+		add_timer(&dvb->watchdog_timer);
 #endif
 		dmx_reset_hw(dvb);
 	}
@@ -3418,15 +3421,6 @@ static int dmx_enable(struct aml_dmx *dmx)
 			DMX_WRITE_REG(dmx->id, TS_HIU_CTL,
 				  (1 << PDTS_WR_SEL) |
 			   (hi_bsf << USE_HI_BSF_INTERFACE));
-		}
-
-		if (!fec_core_sel) {
-			if (ciplus_out_sel != CIPLUS_OUTPUT_AUTO) {
-				int mask = 1 << dmx->id;
-
-				if (ciplus_out_sel & mask)
-					fec_core_sel = 1;
-			}
 		}
 
 		if (fec_sel == -1) {
@@ -5917,7 +5911,7 @@ int _set_tsfile_clkdiv(struct aml_dvb *dvb, int clkdiv)
 	return 0;
 }
 
-static ssize_t tsfile_clkdiv_store(struct class *class,
+static ssize_t stb_set_tsfile_clkdiv(struct class *class,
 				     struct class_attribute *attr,
 				     const char *buf, size_t size)
 {
@@ -5929,7 +5923,7 @@ static ssize_t tsfile_clkdiv_store(struct class *class,
 	return size;
 }
 
-static ssize_t tsfile_clkdiv_show(struct class *class,
+static ssize_t stb_get_tsfile_clkdiv(struct class *class,
 				     struct class_attribute *attr, char *buf)
 {
 	ssize_t ret;
@@ -5999,7 +5993,7 @@ static ssize_t dmx_timeout_store(struct class *class,
 
 
 #define DEMUX_SCAMBLE_FUNC_DECL(i)  \
-static ssize_t demux##i##_scramble_show(struct class *class,  \
+static ssize_t dmx_reg_value_show_demux##i##_scramble(struct class *class,  \
 struct class_attribute *attr, char *buf)\
 {\
 	int data = 0;\
@@ -6096,21 +6090,21 @@ static ssize_t reset_fec_input_ctrl_store(struct class *class,
 
 	return size;
 }
-static ssize_t register_addr_show(struct class *class,
+static ssize_t dmx_reg_addr_show_source(struct class *class,
 					struct class_attribute *attr,
 					char *buf);
-static ssize_t register_addr_store(struct class *class,
+static ssize_t dmx_reg_addr_store_source(struct class *class,
 					 struct class_attribute *attr,
 					 const char *buf, size_t size);
-static ssize_t dmx_id_show(struct class *class,
+static ssize_t dmx_id_show_source(struct class *class,
 				  struct class_attribute *attr, char *buf);
-static ssize_t dmx_id_store(struct class *class,
+static ssize_t dmx_id_store_source(struct class *class,
 				   struct class_attribute *attr,
 				   const char *buf, size_t size);
-static ssize_t register_value_show(struct class *class,
+static ssize_t dmx_reg_value_show_source(struct class *class,
 					 struct class_attribute *attr,
 					 char *buf);
-static ssize_t register_value_store(struct class *class,
+static ssize_t dmx_reg_value_store_source(struct class *class,
 					  struct class_attribute *attr,
 					  const char *buf, size_t size);
 static ssize_t dmx_sec_statistics_show(struct class *class,
@@ -6118,63 +6112,51 @@ static ssize_t dmx_sec_statistics_show(struct class *class,
 					 char *buf);
 static int reg_addr;
 
-static CLASS_ATTR_RW(dmx_id);
-static CLASS_ATTR_RW(register_addr);
-static CLASS_ATTR_RW(register_value);
-static CLASS_ATTR_RW(tsfile_clkdiv);
+static struct class_attribute aml_dmx_class_attrs[] = {
+	__ATTR(dmx_id, 0644, dmx_id_show_source,
+	       dmx_id_store_source),
+	__ATTR(register_addr, 0644, dmx_reg_addr_show_source,
+	       dmx_reg_addr_store_source),
+	__ATTR(register_value, 0644, dmx_reg_value_show_source,
+	       dmx_reg_value_store_source),
+	__ATTR(tsfile_clkdiv, 0644, stb_get_tsfile_clkdiv,
+	       stb_set_tsfile_clkdiv),
 
 #define DEMUX_SCAMBLE_ATTR_DECL(i)\
-	CLASS_ATTR_RO(demux##i##_scramble);
+		__ATTR(demux##i##_scramble,  0644, \
+		dmx_reg_value_show_demux##i##_scramble, NULL)
 #if DMX_DEV_COUNT > 0
-DEMUX_SCAMBLE_ATTR_DECL(0);
+	DEMUX_SCAMBLE_ATTR_DECL(0),
 #endif
 #if DMX_DEV_COUNT > 1
-DEMUX_SCAMBLE_ATTR_DECL(1);
+	DEMUX_SCAMBLE_ATTR_DECL(1),
 #endif
 #if DMX_DEV_COUNT > 2
-DEMUX_SCAMBLE_ATTR_DECL(2);
+	DEMUX_SCAMBLE_ATTR_DECL(2),
 #endif
 
-static CLASS_ATTR_RW(dmx_smallsec);
-static CLASS_ATTR_RW(dmx_timeout);
-static CLASS_ATTR_RW(reset_fec_input_ctrl);
-static CLASS_ATTR_RW(ciplus_output_ctrl);
-static CLASS_ATTR_RO(dmx_sec_statistics);
-
-#define DMX_ATTR(name) &class_attr_##name.attr
-
-static struct attribute *aml_dmx_class_attrs[] = {
-	DMX_ATTR(dmx_id),
-	DMX_ATTR(register_addr),
-	DMX_ATTR(register_value),
-	DMX_ATTR(tsfile_clkdiv),
-	DMX_ATTR(dmx_smallsec),
-	DMX_ATTR(dmx_timeout),
-	DMX_ATTR(reset_fec_input_ctrl),
-	DMX_ATTR(ciplus_output_ctrl),
-	DMX_ATTR(dmx_sec_statistics),
-#define DEMUX_SCRAMBLE(i) \
-	DMX_ATTR(demux##i##_scramble)
-#if DMX_DEV_COUNT > 0
-	DEMUX_SCRAMBLE(0),
-#endif
-#if DMX_DEV_COUNT > 1
-	DEMUX_SCRAMBLE(1),
-#endif
-#if DMX_DEV_COUNT > 2
-	DEMUX_SCRAMBLE(2),
-#endif
-	NULL,
+	__ATTR(dmx_smallsec,  0644,
+			dmx_smallsec_show,
+			dmx_smallsec_store),
+	__ATTR(dmx_timeout,  0644,
+			dmx_timeout_show,
+			dmx_timeout_store),
+	__ATTR(reset_fec_input_ctrl,  0644,
+			reset_fec_input_ctrl_show,
+			reset_fec_input_ctrl_store),
+	__ATTR(ciplus_output_ctrl,  0644,
+			ciplus_output_ctrl_show,
+			ciplus_output_ctrl_store),
+	__ATTR_RO(dmx_sec_statistics),
+	__ATTR_NULL
 };
-
-ATTRIBUTE_GROUPS(aml_dmx_class);
 
 static struct class aml_dmx_class = {
 	.name = "dmx",
-	.class_groups = aml_dmx_class_groups,
+	.class_attrs = aml_dmx_class_attrs,
 };
 
-static ssize_t dmx_id_show(struct class *class,
+static ssize_t dmx_id_show_source(struct class *class,
 				  struct class_attribute *attr, char *buf)
 {
 	int ret;
@@ -6183,7 +6165,7 @@ static ssize_t dmx_id_show(struct class *class,
 	return ret;
 }
 
-static ssize_t dmx_id_store(struct class *class,
+static ssize_t dmx_id_store_source(struct class *class,
 				   struct class_attribute *attr,
 				   const char *buf, size_t size)
 {
@@ -6202,7 +6184,7 @@ static ssize_t dmx_id_store(struct class *class,
 	return size;
 }
 
-static ssize_t register_addr_show(struct class *class,
+static ssize_t dmx_reg_addr_show_source(struct class *class,
 					struct class_attribute *attr,
 					 char *buf)
 {
@@ -6212,7 +6194,7 @@ static ssize_t register_addr_show(struct class *class,
 	return ret;
 }
 
-static ssize_t register_addr_store(struct class *class,
+static ssize_t dmx_reg_addr_store_source(struct class *class,
 					 struct class_attribute *attr,
 					 const char *buf, size_t size)
 {
@@ -6226,7 +6208,7 @@ static ssize_t register_addr_store(struct class *class,
 	return size;
 }
 
-static ssize_t register_value_show(struct class *class,
+static ssize_t dmx_reg_value_show_source(struct class *class,
 					 struct class_attribute *attr,
 					 char *buf)
 {
@@ -6237,7 +6219,7 @@ static ssize_t register_value_show(struct class *class,
 	return ret;
 }
 
-static ssize_t register_value_store(struct class *class,
+static ssize_t dmx_reg_value_store_source(struct class *class,
 					  struct class_attribute *attr,
 					  const char *buf, size_t size)
 {

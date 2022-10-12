@@ -1,3 +1,22 @@
+/*
+* Copyright (C) 2017 Amlogic, Inc. All rights reserved.
+*
+* This program is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation; either version 2 of the License, or
+* (at your option) any later version.
+*
+* This program is distributed in the hope that it will be useful, but WITHOUT
+* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+* FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+* more details.
+*
+* You should have received a copy of the GNU General Public License along
+* with this program; if not, write to the Free Software Foundation, Inc.,
+* 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+*
+* Description:
+*/
 #ifndef UTILS_COMMON_H
 #define UTILS_COMMON_H
 
@@ -58,7 +77,7 @@ struct AVRational{
 #ifndef CONFIG_AMLOGIC_MEDIA_V4L_SOFTWARE_PARSER
 /**
  * YUV colorspace type.
- * These values match the ones defined by ISO/IEC 23001-8_2013 ¡ì 7.3.
+ * These values match the ones defined by ISO/IEC 23001-8_2013 Â§ 7.3.
  */
 enum AVColorSpace {
 	AVCOL_SPC_RGB         = 0,  ///< order of coefficients is actually GBR, also IEC 61966-2-1 (sRGB)
@@ -82,7 +101,7 @@ enum AVColorSpace {
 
 /**
   * Chromaticity coordinates of the source primaries.
-  * These values match the ones defined by ISO/IEC 23001-8_2013 ¡ì 7.1.
+  * These values match the ones defined by ISO/IEC 23001-8_2013 Â§ 7.1.
   */
 enum AVColorPrimaries {
 	AVCOL_PRI_RESERVED0   = 0,
@@ -106,7 +125,7 @@ enum AVColorPrimaries {
 
 /**
  * Color Transfer Characteristic.
- * These values match the ones defined by ISO/IEC 23001-8_2013 ¡ì 7.2.
+ * These values match the ones defined by ISO/IEC 23001-8_2013 Â§ 7.2.
  */
 enum AVColorTransferCharacteristic {
 	AVCOL_TRC_RESERVED0    = 0,
@@ -132,8 +151,8 @@ enum AVColorTransferCharacteristic {
 	AVCOL_TRC_ARIB_STD_B67 = 18, ///< ARIB STD-B67, known as "Hybrid log-gamma"
 	AVCOL_TRC_NB                 ///< Not part of ABI
 };
-#endif
 
+#endif
 //fmt
 const char *av_color_space_name(enum AVColorSpace space);
 const char *av_color_primaries_name(enum AVColorPrimaries primaries);
@@ -149,7 +168,5 @@ u8 *nal_unit_extract_rbsp(const u8 *src, u32 src_len, u32 *dst_len);
 
 //debug
 void print_hex_debug(u8 *data, u32 len, int max);
-
-bool is_over_size(int w, int h, int size);
 
 #endif

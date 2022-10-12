@@ -85,11 +85,7 @@ struct package_head_s {
 	int checksum;
 	int total;
 	int version;
-	int submit_count;
-	char change_id[16];
-	char commit[16];
-	char history_change_id[30];
-	char reserved[62];
+	char reserved[128];
 };
 
 struct package_s {

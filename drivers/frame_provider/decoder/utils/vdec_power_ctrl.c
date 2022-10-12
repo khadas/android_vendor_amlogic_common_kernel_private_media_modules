@@ -19,10 +19,8 @@
 #include "vdec_power_ctrl.h"
 #include <linux/amlogic/media/utils/vdec_reg.h>
 #include <linux/amlogic/power_ctrl.h>
-//#include <dt-bindings/power/sc2-pd.h>
-//#include <linux/amlogic/pwr_ctrl.h>
-#include <linux/amlogic/power_domain.h>
 #include <dt-bindings/power/sc2-pd.h>
+#include <linux/amlogic/pwr_ctrl.h>
 #include <linux/amlogic/media/codec_mm/codec_mm.h>
 #include "../../../common/media_clock/switch/amports_gate.h"
 #include "../../../common/chips/decoder_cpu_ver_info.h"
@@ -30,12 +28,6 @@
 
 #define HEVC_TEST_LIMIT		(100)
 #define GXBB_REV_A_MINOR	(0xa)
-
-#define PDID_DSP            0
-#define PDID_DOS_HCODEC             1
-#define PDID_DOS_HEVC               2
-#define PDID_DOS_VDEC               3
-#define PDID_DOS_WAVE               4
 
 extern int no_powerdown;
 extern int hevc_max_reset_count;
@@ -144,20 +136,14 @@ static void pm_vdec_clock_on(int id)
 		hcodec_clock_enable();
 	} else if (id == VDEC_HEVC) {
 		/* enable hevc clock */
-		if (get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_SC2 &&
-			(get_cpu_major_id() != AM_MESON_CPU_MAJOR_ID_T5) &&
-			(get_cpu_major_id() != AM_MESON_CPU_MAJOR_ID_T5D))
+		if (get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_SC2)
 			amports_switch_gate("clk_hevcf_mux", 1);
 		else
 			amports_switch_gate("clk_hevc_mux", 1);
-		if ((get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_G12A) &&
-			!is_hevc_front_back_clk_combined())
+		if (get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_G12A)
 			amports_switch_gate("clk_hevcb_mux", 1);
-
 		hevc_clock_hi_enable();
-
-		if (!is_hevc_front_back_clk_combined())
-			hevc_back_clock_hi_enable();
+		hevc_back_clock_hi_enable();
 	}
 }
 
@@ -170,8 +156,7 @@ static void pm_vdec_clock_off(int id)
 	} else if (id == VDEC_HEVC) {
 		/* disable hevc clock */
 		hevc_clock_off();
-		if ((get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_G12A) &&
-			!is_hevc_front_back_clk_combined())
+		if (get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_G12A)
 			hevc_back_clock_off();
 	}
 }
@@ -708,6 +693,7 @@ static void pm_vdec_pd_sec_api_power_on(struct device *dev, int id)
 
 	pm_vdec_clock_on(id);
 	pwr_ctrl_psci_smc(pd_id, PWR_ON);
+
 }
 
 static void pm_vdec_pd_sec_api_power_off(struct device *dev, int id)
@@ -734,7 +720,7 @@ static void pm_vdec_pd_nosec_api_power_on(struct device *dev, int id)
 #if 0
 	int pd_id = (id == VDEC_1) ? PM_DOS_VDEC :
 		    (id == VDEC_HEVC) ? PM_DOS_HEVC :
-			PM_DOS_HCODEC;
+		    PM_DOS_HCODEC;
 
 	pm_vdec_clock_on(id);
 	power_domain_switch(pd_id, PWR_ON);

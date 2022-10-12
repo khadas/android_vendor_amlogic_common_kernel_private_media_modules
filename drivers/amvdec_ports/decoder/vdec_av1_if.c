@@ -29,6 +29,7 @@
 #include "../aml_vcodec_drv.h"
 #include "../aml_vcodec_adapt.h"
 #include "../vdec_drv_base.h"
+#include "../aml_vcodec_vfm.h"
 #include "../utils/common.h"
 
 #define KERNEL_ATRACE_TAG KERNEL_ATRACE_TAG_V4L2
@@ -117,9 +118,9 @@ struct vdec_av1_inst {
 	struct aml_vcodec_ctx *ctx;
 	struct aml_vdec_adapt vdec;
 	struct vdec_av1_vsi *vsi;
+	struct vcodec_vfm_s vfm;
 	struct aml_dec_params parms;
 	struct completion comp;
-	struct vdec_comp_buf_info comp_info;
 };
 
 /*!\brief OBU types. */
@@ -206,7 +207,6 @@ struct DataBuffer {
 
 static int vdec_write_nalu(struct vdec_av1_inst *inst,
 	u8 *buf, u32 size, u64 ts);
-static int vdec_get_dw_mode(struct vdec_av1_inst *inst, int dw_mode);
 
 static void get_pic_info(struct vdec_av1_inst *inst,
 			 struct vdec_pic_info *pic)
@@ -264,10 +264,6 @@ static void vdec_parser_parms(struct vdec_av1_inst *inst)
 {
 	struct aml_vcodec_ctx *ctx = inst->ctx;
 
-	v4l_dbg(ctx, V4L_DEBUG_CODEC_EXINFO,
-		"%s:parms_status = 0x%x, present_flag = %d\n",
-		__func__, ctx->config.parm.dec.parms_status,
-		ctx->config.parm.dec.hdr.color_parms.present_flag);
 	if (ctx->config.parm.dec.parms_status &
 		V4L2_CONFIG_PARM_DECODE_CFGINFO) {
 		u8 *pbuf = ctx->config.buf;
@@ -277,8 +273,10 @@ static void vdec_parser_parms(struct vdec_av1_inst *inst)
 			ctx->config.parm.dec.cfg.ref_buf_margin);
 		pbuf += sprintf(pbuf, "av1_double_write_mode:%d;",
 			ctx->config.parm.dec.cfg.double_write_mode);
-		pbuf += sprintf(pbuf, "av1_buf_width:1920;");
-		pbuf += sprintf(pbuf, "av1_buf_height:1088;");
+		pbuf += sprintf(pbuf, "av1_buf_width:%d;",
+			ctx->config.parm.dec.cfg.init_width);
+		pbuf += sprintf(pbuf, "av1_buf_height:%d;",
+			ctx->config.parm.dec.cfg.init_height);
 		pbuf += sprintf(pbuf, "save_buffer_mode:0;");
 		pbuf += sprintf(pbuf, "no_head:0;");
 		pbuf += sprintf(pbuf, "parm_v4l_canvas_mem_mode:%d;",
@@ -296,12 +294,10 @@ static void vdec_parser_parms(struct vdec_av1_inst *inst)
 
 	if ((ctx->config.parm.dec.parms_status &
 		V4L2_CONFIG_PARM_DECODE_HDRINFO) &&
-		ctx->config.parm.dec.hdr.color_parms.present_flag) {
+		inst->parms.hdr.color_parms.present_flag) {
 		u8 *pbuf = ctx->config.buf + ctx->config.length;
 
 		pbuf += sprintf(pbuf, "HDRStaticInfo:%d;", 1);
-		pbuf += sprintf(pbuf, "signal_type:%d;",
-			ctx->config.parm.dec.hdr.signal_type);
 		pbuf += sprintf(pbuf, "mG.x:%d;",
 			ctx->config.parm.dec.hdr.color_parms.primaries[0][0]);
 		pbuf += sprintf(pbuf, "mG.y:%d;",
@@ -330,8 +326,6 @@ static void vdec_parser_parms(struct vdec_av1_inst *inst)
 		inst->parms.hdr		= ctx->config.parm.dec.hdr;
 		inst->parms.parms_status |= V4L2_CONFIG_PARM_DECODE_HDRINFO;
 	}
-	v4l_dbg(ctx, V4L_DEBUG_CODEC_EXINFO,
-		"config.buf = %s\n", ctx->config.buf);
 
 	inst->vdec.config	= ctx->config;
 	inst->parms.cfg		= ctx->config.parm.dec.cfg;
@@ -347,7 +341,6 @@ static int vdec_av1_init(struct aml_vcodec_ctx *ctx, unsigned long *h_vdec)
 	if (!inst)
 		return -ENOMEM;
 
-	inst->vdec.frm_name	= "AV1";
 	inst->vdec.video_type	= VFORMAT_AV1;
 	inst->vdec.filp		= ctx->dev->filp;
 	inst->vdec.ctx		= ctx;
@@ -362,6 +355,16 @@ static int vdec_av1_init(struct aml_vcodec_ctx *ctx, unsigned long *h_vdec)
 	/* to eable av1 hw.*/
 	inst->vdec.port.type	= PORT_TYPE_HEVC;
 
+	/* init vfm */
+	inst->vfm.ctx		= ctx;
+	inst->vfm.ada_ctx	= &inst->vdec;
+	ret = vcodec_vfm_init(&inst->vfm);
+	if (ret) {
+		v4l_dbg(inst->ctx, V4L_DEBUG_CODEC_ERROR,
+			"init vfm failed.\n");
+		goto err;
+	}
+
 	/* probe info from the stream */
 	inst->vsi = kzalloc(sizeof(struct vdec_av1_vsi), GFP_KERNEL);
 	if (!inst->vsi) {
@@ -370,13 +373,16 @@ static int vdec_av1_init(struct aml_vcodec_ctx *ctx, unsigned long *h_vdec)
 	}
 
 	/* alloc the header buffer to be used cache sps or spp etc.*/
-	inst->vsi->header_buf = vzalloc(HEADER_BUFFER_SIZE);
+	inst->vsi->header_buf = kzalloc(HEADER_BUFFER_SIZE, GFP_KERNEL);
 	if (!inst->vsi->header_buf) {
 		ret = -ENOMEM;
 		goto err;
 	}
 
 	init_completion(&inst->comp);
+
+	v4l_dbg(inst->ctx, V4L_DEBUG_CODEC_PRINFO,
+		"av1 Instance >> %lx\n", (ulong) inst);
 
 	ctx->ada_ctx	= &inst->vdec;
 	*h_vdec		= (unsigned long)inst;
@@ -389,13 +395,14 @@ static int vdec_av1_init(struct aml_vcodec_ctx *ctx, unsigned long *h_vdec)
 		goto err;
 	}
 
-	v4l_dbg(inst->ctx, V4L_DEBUG_CODEC_PRINFO,
-		"av1 Instance >> %lx\n", (ulong) inst);
+	//dump_init();
 
 	return 0;
 err:
+	if (inst)
+		vcodec_vfm_release(&inst->vfm);
 	if (inst && inst->vsi && inst->vsi->header_buf)
-		vfree(inst->vsi->header_buf);
+		kfree(inst->vsi->header_buf);
 	if (inst && inst->vsi)
 		kfree(inst->vsi);
 	if (inst)
@@ -421,7 +428,7 @@ static int parse_stream_ucode(struct vdec_av1_inst *inst,
 	wait_for_completion_timeout(&inst->comp,
 		msecs_to_jiffies(1000));
 
-	return inst->vsi->pic.dpb_frames ? 0 : -1;
+	return inst->vsi->dec.dpb_sz ? 0 : -1;
 }
 
 static int parse_stream_ucode_dma(struct vdec_av1_inst *inst,
@@ -442,7 +449,7 @@ static int parse_stream_ucode_dma(struct vdec_av1_inst *inst,
 	wait_for_completion_timeout(&inst->comp,
 		msecs_to_jiffies(1000));
 
-	return inst->vsi->pic.dpb_frames ? 0 : -1;
+	return inst->vsi->dec.dpb_sz ? 0 : -1;
 }
 
 static int parse_stream_cpu(struct vdec_av1_inst *inst, u8 *buf, u32 size)
@@ -497,13 +504,19 @@ static int vdec_av1_probe(unsigned long h_vdec,
 
 static void vdec_av1_deinit(unsigned long h_vdec)
 {
+	ulong flags;
 	struct vdec_av1_inst *inst = (struct vdec_av1_inst *)h_vdec;
 	struct aml_vcodec_ctx *ctx = inst->ctx;
 
 	video_decoder_release(&inst->vdec);
 
+	vcodec_vfm_release(&inst->vfm);
+
+	//dump_deinit();
+
+	spin_lock_irqsave(&ctx->slock, flags);
 	if (inst->vsi && inst->vsi->header_buf)
-		vfree(inst->vsi->header_buf);
+		kfree(inst->vsi->header_buf);
 
 	if (inst->vsi)
 		kfree(inst->vsi);
@@ -511,6 +524,42 @@ static void vdec_av1_deinit(unsigned long h_vdec)
 	kfree(inst);
 
 	ctx->drv_handle = 0;
+	spin_unlock_irqrestore(&ctx->slock, flags);
+}
+
+static int vdec_av1_get_fb(struct vdec_av1_inst *inst, struct vdec_v4l2_buffer **out)
+{
+	return get_fb_from_queue(inst->ctx, out);
+}
+
+static void vdec_av1_get_vf(struct vdec_av1_inst *inst, struct vdec_v4l2_buffer **out)
+{
+	struct vframe_s *vf = NULL;
+	struct vdec_v4l2_buffer *fb = NULL;
+
+	vf = peek_video_frame(&inst->vfm);
+	if (!vf) {
+		v4l_dbg(inst->ctx, V4L_DEBUG_CODEC_ERROR,
+			"there is no vframe.\n");
+		*out = NULL;
+		return;
+	}
+
+	vf = get_video_frame(&inst->vfm);
+	if (!vf) {
+		v4l_dbg(inst->ctx, V4L_DEBUG_CODEC_ERROR,
+			"the vframe is avalid.\n");
+		*out = NULL;
+		return;
+	}
+
+	atomic_set(&vf->use_cnt, 1);
+
+	fb = (struct vdec_v4l2_buffer *)vf->v4l_mem_handle;
+	fb->vf_handle = (unsigned long)vf;
+	fb->status = FB_ST_DISPLAY;
+
+	*out = fb;
 }
 
 // Returns 1 when OBU type is valid, and 0 otherwise.
@@ -587,7 +636,7 @@ int uleb_encode(u64 value, size_t available,
 	int i;
 	const size_t leb_size = uleb_size_in_bytes(value);
 
-	if (value > kMaximumLeb128Value || leb_size > kMaximumLeb128Size ||
+	if (leb_size > kMaximumLeb128Size ||
 		leb_size > available || !coded_value || !coded_size) {
 		return -1;
 	}
@@ -655,11 +704,12 @@ static int read_obu_size(const u8 *data,
 static int read_obu_header(struct read_bit_buffer *rb,
 	int is_annexb, struct ObuHeader *header)
 {
-	const int bit_buffer_byte_length =
-		rb->bit_buffer_end - rb->bit_buffer;
+	int bit_buffer_byte_length;
 
 	if (!rb || !header)
 		return -1;
+
+	bit_buffer_byte_length = rb->bit_buffer_end - rb->bit_buffer;
 
 	if (bit_buffer_byte_length < 1)
 		return -1;
@@ -998,13 +1048,13 @@ static int vdec_write_nalu(struct vdec_av1_inst *inst,
 		parser_frame(0, src, src + size, data, &length, meta_buffer, &meta_size);
 
 		if (length)
-			ret = vdec_vframe_write(vdec, data, length, ts, 0);
+			ret = vdec_vframe_write(vdec, data, length, ts);
 		else
 			ret = -1;
 
 		vfree(data);
 	} else {
-		ret = vdec_vframe_write(vdec, buf, size, ts, 0);
+		ret = vdec_vframe_write(vdec, buf, size, ts);
 	}
 
 	return ret;
@@ -1038,14 +1088,18 @@ static int vdec_av1_decode(unsigned long h_vdec,
 {
 	struct vdec_av1_inst *inst = (struct vdec_av1_inst *)h_vdec;
 	struct aml_vdec_adapt *vdec = &inst->vdec;
-	u8 *buf = (u8 *) bs->vaddr;
-	u32 size = bs->size;
+	u8 *buf;
+	u32 size;
 	int ret = -1;
 
 	if (bs == NULL)
 		return -1;
 
+	buf = (u8 *) bs->vaddr;
+	size = bs->size;
+
 	if (vdec_input_full(vdec)) {
+		ATRACE_COUNTER("vdec_input_full", 0);
 		return -EAGAIN;
 	}
 
@@ -1067,8 +1121,7 @@ static int vdec_av1_decode(unsigned long h_vdec,
 			ret = vdec_vframe_write(vdec,
 				s->data,
 				s->len,
-				bs->timestamp,
-				0);
+				bs->timestamp);
 		} else if (bs->model == VB2_MEMORY_DMABUF ||
 			bs->model == VB2_MEMORY_USERPTR) {
 			ret = vdec_vframe_write_with_dma(vdec,
@@ -1084,6 +1137,7 @@ static int vdec_av1_decode(unsigned long h_vdec,
 
 		ret = vdec_write_nalu(inst, buf, size, bs->timestamp);
 	}
+	ATRACE_COUNTER("v4l2_decode_write", ret);
 
 	return ret;
 }
@@ -1102,15 +1156,9 @@ static int vdec_av1_decode(unsigned long h_vdec,
 
 	 parms->parms_status |= inst->parms.parms_status;
 
-	v4l_dbg(inst->ctx, V4L_DEBUG_CODEC_EXINFO,
+	v4l_dbg(inst->ctx, V4L_DEBUG_CODEC_PRINFO,
 		"parms status: %u\n", parms->parms_status);
  }
-
-static void get_param_comp_buf_info(struct vdec_av1_inst *inst,
-		struct vdec_comp_buf_info *params)
-{
-	memcpy(params, &inst->comp_info, sizeof(*params));
-}
 
 static int vdec_av1_get_param(unsigned long h_vdec,
 			       enum vdec_get_param_type type, void *out)
@@ -1119,12 +1167,20 @@ static int vdec_av1_get_param(unsigned long h_vdec,
 	struct vdec_av1_inst *inst = (struct vdec_av1_inst *)h_vdec;
 
 	if (!inst) {
-		v4l_dbg(inst->ctx, V4L_DEBUG_CODEC_ERROR,
+		v4l_dbg(0, V4L_DEBUG_CODEC_ERROR,
 			"the av1 inst of dec is invalid.\n");
 		return -1;
 	}
 
 	switch (type) {
+	case GET_PARAM_DISP_FRAME_BUFFER:
+		vdec_av1_get_vf(inst, out);
+		break;
+
+	case GET_PARAM_FREE_FRAME_BUFFER:
+		ret = vdec_av1_get_fb(inst, out);
+		break;
+
 	case GET_PARAM_PIC_INFO:
 		get_pic_info(inst, out);
 		break;
@@ -1141,20 +1197,6 @@ static int vdec_av1_get_param(unsigned long h_vdec,
 		get_param_config_info(inst, out);
 		break;
 
-	case GET_PARAM_DW_MODE:
-	{
-		u32 *mode = out;
-		u32 m = inst->ctx->config.parm.dec.cfg.double_write_mode;
-		if (m <= 16)
-			*mode = inst->ctx->config.parm.dec.cfg.double_write_mode;
-		else
-			*mode = vdec_get_dw_mode(inst, 0);
-		break;
-	}
-	case GET_PARAM_COMP_BUF_INFO:
-		get_param_comp_buf_info(inst, out);
-		break;
-
 	default:
 		v4l_dbg(inst->ctx, V4L_DEBUG_CODEC_ERROR,
 			"invalid get parameter type=%d\n", type);
@@ -1169,68 +1211,12 @@ static void set_param_write_sync(struct vdec_av1_inst *inst)
 	complete(&inst->comp);
 }
 
-static int vdec_get_dw_mode(struct vdec_av1_inst *inst, int dw_mode)
-{
-	u32 valid_dw_mode = inst->parms.cfg.double_write_mode;
-	int w = inst->vsi->pic.coded_width;
-	int h = inst->vsi->pic.coded_height;
-	u32 dw = 0x1; /*1:1*/
-
-	switch (valid_dw_mode) {
-	case 0x100:
-		if (w > 1920 && h > 1088)
-			dw = 0x4; /*1:2*/
-		break;
-	case 0x200:
-		if (w > 1920 && h > 1088)
-			dw = 0x2; /*1:4*/
-		break;
-	case 0x300:
-		if (w > 1280 && h > 720)
-			dw = 0x4; /*1:2*/
-		break;
-	default:
-		dw = valid_dw_mode;
-		break;
-	}
-
-	return dw;
-}
-
-static int vdec_pic_scale(struct vdec_av1_inst *inst, int length, int dw_mode)
-{
-	int ret = 64;
-
-	switch (vdec_get_dw_mode(inst, dw_mode)) {
-	case 0x0: /* only afbc, output afbc */
-		ret = 64;
-		break;
-	case 0x1: /* afbc and (w x h), output YUV420 */
-		ret = length;
-		break;
-	case 0x2: /* afbc and (w/4 x h/4), output YUV420 */
-	case 0x3: /* afbc and (w/4 x h/4), output afbc and YUV420 */
-		ret = length >> 2;
-		break;
-	case 0x4: /* afbc and (w/2 x h/2), output YUV420 */
-		ret = length >> 1;
-		break;
-	case 0x10: /* (w x h), output YUV420-8bit) */
-	default:
-		ret = length;
-		break;
-	}
-
-	return ret;
-}
-
 static void set_param_ps_info(struct vdec_av1_inst *inst,
 	struct aml_vdec_ps_infos *ps)
 {
 	struct vdec_pic_info *pic = &inst->vsi->pic;
 	struct vdec_av1_dec_info *dec = &inst->vsi->dec;
 	struct v4l2_rect *rect = &inst->vsi->crop;
-	int dw = inst->parms.cfg.double_write_mode;
 
 	/* fill visible area size that be used for EGL. */
 	pic->visible_width	= ps->visible_width;
@@ -1246,16 +1232,11 @@ static void set_param_ps_info(struct vdec_av1_inst *inst,
 	pic->coded_width	= ps->coded_width;
 	pic->coded_height	= ps->coded_height;
 
-	pic->y_len_sz		= ALIGN(vdec_pic_scale(inst, pic->coded_width, dw), 64) *
-				  ALIGN(vdec_pic_scale(inst, pic->coded_height, dw), 64);
+	pic->y_len_sz		= pic->coded_width * pic->coded_height;
 	pic->c_len_sz		= pic->y_len_sz >> 1;
 
 	/* calc DPB size */
-	pic->dpb_frames		= ps->dpb_frames;
-	pic->dpb_margin		= ps->dpb_margin;
-	pic->vpp_margin		= ps->dpb_margin;
 	dec->dpb_sz		= ps->dpb_size;
-	pic->field		= ps->field;
 
 	inst->parms.ps 	= *ps;
 	inst->parms.parms_status |=
@@ -1265,15 +1246,10 @@ static void set_param_ps_info(struct vdec_av1_inst *inst,
 	complete(&inst->comp);
 
 	v4l_dbg(inst->ctx, V4L_DEBUG_CODEC_PRINFO,
-		"Parse from ucode, visible(%d x %d), coded(%d x %d)\n",
+		"Parse from ucode, crop(%d x %d), coded(%d x %d) dpb: %d\n",
 		ps->visible_width, ps->visible_height,
-		ps->coded_width, ps->coded_height);
-}
-
-static void set_param_comp_buf_info(struct vdec_av1_inst *inst,
-		struct vdec_comp_buf_info *info)
-{
-	memcpy(&inst->comp_info, info, sizeof(*info));
+		ps->coded_width, ps->coded_height,
+		ps->dpb_size);
 }
 
 static void set_param_hdr_info(struct vdec_av1_inst *inst,
@@ -1286,7 +1262,7 @@ static void set_param_hdr_info(struct vdec_av1_inst *inst,
 			V4L2_CONFIG_PARM_DECODE_HDRINFO;
 		aml_vdec_dispatch_event(inst->ctx,
 			V4L2_EVENT_SRC_CH_HDRINFO);
-		v4l_dbg(inst->ctx, V4L_DEBUG_CODEC_EXINFO,
+		v4l_dbg(inst->ctx, V4L_DEBUG_CODEC_PRINFO,
 			"av1 set HDR infos\n");
 	}
 }
@@ -1298,12 +1274,6 @@ static void set_param_post_event(struct vdec_av1_inst *inst, u32 *event)
 			"av1 post event: %d\n", *event);
 }
 
-static void set_pic_info(struct vdec_av1_inst *inst,
-	struct vdec_pic_info *pic)
-{
-	inst->vsi->pic = *pic;
-}
-
 static int vdec_av1_set_param(unsigned long h_vdec,
 	enum vdec_set_param_type type, void *in)
 {
@@ -1311,7 +1281,7 @@ static int vdec_av1_set_param(unsigned long h_vdec,
 	struct vdec_av1_inst *inst = (struct vdec_av1_inst *)h_vdec;
 
 	if (!inst) {
-		v4l_dbg(inst->ctx, V4L_DEBUG_CODEC_ERROR,
+		v4l_dbg(0, V4L_DEBUG_CODEC_ERROR,
 			"the av1 inst of dec is invalid.\n");
 		return -1;
 	}
@@ -1325,10 +1295,6 @@ static int vdec_av1_set_param(unsigned long h_vdec,
 		set_param_ps_info(inst, in);
 		break;
 
-	case SET_PARAM_COMP_BUF_INFO:
-		set_param_comp_buf_info(inst, in);
-		break;
-
 	case SET_PARAM_HDR_INFO:
 		set_param_hdr_info(inst, in);
 		break;
@@ -1336,11 +1302,6 @@ static int vdec_av1_set_param(unsigned long h_vdec,
 	case SET_PARAM_POST_EVENT:
 		set_param_post_event(inst, in);
 		break;
-
-	case SET_PARAM_PIC_INFO:
-		set_pic_info(inst, in);
-		break;
-
 	default:
 		v4l_dbg(inst->ctx, V4L_DEBUG_CODEC_ERROR,
 			"invalid set parameter type=%d\n", type);

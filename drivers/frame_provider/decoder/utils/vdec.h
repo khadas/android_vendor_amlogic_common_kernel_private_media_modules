@@ -23,7 +23,7 @@
 #include <linux/list.h>
 #include <linux/completion.h>
 #include <linux/irqreturn.h>
-#include <linux/videodev2.h>
+
 #include <linux/amlogic/media/utils/amstream.h>
 #include <linux/amlogic/media/vfm/vframe.h>
 #include <linux/amlogic/media/vfm/vframe_provider.h>
@@ -37,7 +37,6 @@
 #include "vdec_input.h"
 #include "frame_check.h"
 #include "vdec_sync.h"
-#include "vdec_canvas_utils.h"
 
 s32 vdec_dev_register(void);
 s32 vdec_dev_unregister(void);
@@ -57,13 +56,14 @@ void vdec_module_exit(void);
 
 #define VDEC_FIFO_ALIGN 8
 
+#define VDEC_FCC_SUPPORT
+
 enum vdec_type_e {
 	VDEC_1 = 0,
 	VDEC_HCODEC,
 	VDEC_2,
 	VDEC_HEVC,
 	VDEC_HEVCB,
-	VDEC_WAVE,
 	VDEC_MAX
 };
 
@@ -126,14 +126,6 @@ enum e_trace_work_status {
 };
 
 
-#define VDEC_CFG_FLAG_DV_TWOLARYER (1 << 0)
-#define VDEC_CFG_FLAG_DV_NEGATIVE  (1 << 1)
-
-#define VDEC_CFG_FLAG_PROG_ONLY (1 << 16)
-
-#define UVM_META_DATA_VF_BASE_INFOS (1 << 0)
-#define UVM_META_DATA_HDR10P_DATA (1 << 1)
-
 #define CORE_MASK_VDEC_1 (1 << VDEC_1)
 #define CORE_MASK_HCODEC (1 << VDEC_HCODEC)
 #define CORE_MASK_VDEC_2 (1 << VDEC_2)
@@ -142,16 +134,14 @@ enum e_trace_work_status {
 #define CORE_MASK_HEVC_BACK (1 << VDEC_HEVCB)
 #define CORE_MASK_COMBINE (1UL << 31)
 
-#define META_DATA_SIZE	(256)
-
-#define SEI_TYPE	(1)
-#define DV_TYPE		(2)
-
 extern void vdec2_power_mode(int level);
 extern void vdec_poweron(enum vdec_type_e core);
 extern void vdec_poweroff(enum vdec_type_e core);
 extern bool vdec_on(enum vdec_type_e core);
 extern void vdec_power_reset(void);
+extern void vdec_set_dmc_urgent(struct vdec_s *vdec, int urgentType);
+
+
 
 /*irq num as same as .dts*/
 
@@ -185,6 +175,19 @@ enum vdec_fr_hint_state {
 	VDEC_NEED_HINT,
 	VDEC_HINTED,
 };
+
+#ifdef VDEC_FCC_SUPPORT
+typedef enum {
+	DISCARD_STATUS = 1,
+	AGAIN_STATUS,
+	WAIT_MSG_STATUS,
+	SWITCHING_STATUS,
+	JUMP_BACK_STATUS,
+	SWITCH_DONE_STATUS,
+	STATUS_BUTT
+} FCC_STATUS;
+#endif
+
 extern s32 vdec_request_threaded_irq(enum vdec_irq_num num,
 			irq_handler_t handler,
 			irq_handler_t thread_fn,
@@ -206,6 +209,7 @@ extern void vdec_fill_vdec_frame(struct vdec_s *vdec,
 
 extern void vdec_vframe_ready(struct vdec_s *vdec, struct vframe_s *vf);
 extern void vdec_set_vframe_comm(struct vdec_s *vdec, char *n);
+
 
 struct vdec_s;
 enum vformat_t;
@@ -273,7 +277,7 @@ struct vdec_s {
 	int flag;
 	int sched;
 	int need_more_data;
-	u32 canvas_mode;	//canvas block mode
+	u32 canvas_mode;
 
 	struct completion inactive_done;
 
@@ -335,6 +339,9 @@ struct vdec_s {
 			struct userdata_param_t *puserdata_para);
 	void (*reset_userdata_fifo)(struct vdec_s *vdec, int bInit);
 	void (*wakeup_userdata_poll)(struct vdec_s *vdec);
+#ifdef VDEC_FCC_SUPPORT
+	void (*wakeup_fcc_poll)(struct vdec_s *vdec);
+#endif
 	/* private */
 	void *private;       /* decoder per instance specific data */
 #ifdef VDEC_DEBUG_SUPPORT
@@ -361,66 +368,22 @@ struct vdec_s {
 	bool hdr10p_data_valid;
 	u32 profile_idc;
 	u32 level_idc;
-	bool prog_only;
-	bool disable_vfm;
+#ifdef VDEC_FCC_SUPPORT
+	enum fcc_mode_e fcc_mode;
+	u32 stream_offset;
+	int fcc_new_msg;
+	FCC_STATUS fcc_status;
+	wait_queue_head_t jump_back_wq;
+	struct mutex jump_back_mutex;
+	u32 jump_back_done;
+	u32 jump_back_error;
+	u32 jump_back_rp;
+#endif
+	u32 video_id;
 	char name[32];
 	char dec_spend_time[32];
 	char dec_spend_time_ave[32];
 	u32 discard_start_data_flag;
-	u32 video_id;
-	int is_v4l;
-};
-
-#define CODEC_MODE(a, b, c, d)\
-	(((u8)(a) << 24) | ((u8)(b) << 16) | ((u8)(c) << 8) | (u8)(d))
-
-#define META_DATA_MAGIC		CODEC_MODE('M', 'E', 'T', 'A')
-#define AML_META_HEAD_NUM	8
-#define AML_META_HEAD_SIZE	(AML_META_HEAD_NUM * sizeof(u32))
-
-
-struct aml_meta_head_s {
-	u32 magic;
-	u32 type;
-	u32 data_size;
-	u32 data[5];
-};
-
-struct aml_vf_base_info_s {
-	u32 width;
-	u32 height;
-	u32 duration;
-	u32 frame_type;
-	u32 type;
-	u32 data[12];
-};
-
-struct aml_meta_info_s {
-	union {
-		struct aml_meta_head_s head;
-		u32 buf[AML_META_HEAD_NUM];
-	};
-	u8 data[0];
-};
-
-typedef int (*post_task_handler)(void *args);
-
-struct post_task_mgr_s {
-	struct list_head	task_recycle;
-	struct task_struct	*task;
-	struct semaphore        sem;
-	struct mutex		mutex;
-	bool 			running;
-	void			*private;
-};
-
-struct vdec_post_task_parms_s {
-	struct list_head	recycle;
-	struct task_struct	*task;
-	struct completion	park;
-	post_task_handler	func;
-	void			*private;
-	int			scheduled;
 };
 
 #define MAX_USERDATA_CHANNEL_NUM 9
@@ -551,13 +514,14 @@ extern int vdec_destroy(struct vdec_s *vdec);
 extern int vdec_reset(struct vdec_s *vdec);
 
 extern int vdec_v4l2_reset(struct vdec_s *vdec, int flag);
+
 extern void vdec_set_status(struct vdec_s *vdec, int status);
 
 extern void vdec_set_next_status(struct vdec_s *vdec, int status);
 
 extern int vdec_set_decinfo(struct vdec_s *vdec, struct dec_sysinfo *p);
 
-extern int vdec_init(struct vdec_s *vdec, int is_4k, bool is_v4l);
+extern int vdec_init(struct vdec_s *vdec, int is_4k);
 
 extern void vdec_release(struct vdec_s *vdec);
 
@@ -612,9 +576,7 @@ extern void vdec_core_finish_run(struct vdec_s *vdec, unsigned long mask);
 #ifdef VDEC_DEBUG_SUPPORT
 extern void vdec_set_step_mode(void);
 #endif
-
 extern void hevc_mmu_dma_check(struct vdec_s *vdec);
-
 int vdec_read_user_data(struct vdec_s *vdec,
 				struct userdata_param_t *p_userdata_param);
 
@@ -626,6 +588,12 @@ struct vdec_s *vdec_get_vdec_by_video_id(int video_id);
 struct vdec_s *vdec_get_vdec_by_id(int vdec_id);
 
 
+#ifdef VDEC_FCC_SUPPORT
+int vdec_wakeup_fcc_poll(struct vdec_s *vdec);
+int vdec_has_get_fcc_new_msg(struct vdec_s *vdec);
+int fcc_debug_enable(void);
+#endif
+
 #ifdef VDEC_DEBUG_SUPPORT
 extern void vdec_set_step_mode(void);
 #endif
@@ -633,12 +601,12 @@ int vdec_get_debug_flags(void);
 
 void VDEC_PRINT_FUN_LINENO(const char *fun, int line);
 
+
 unsigned char is_mult_inc(unsigned int);
 
 int vdec_get_status(struct vdec_s *vdec);
 
 void vdec_set_timestamp(struct vdec_s *vdec, u64 timestamp);
-void vdec_set_metadata(struct vdec_s *vdec, ulong meta_ptr);
 
 extern u32  vdec_get_frame_vdec(struct vdec_s *vdec,  struct vframe_counter_s *tmpbuf);
 
@@ -647,13 +615,12 @@ int vdec_get_frame_num(struct vdec_s *vdec);
 int show_stream_buffer_status(char *buf,
 	int (*callback) (struct stream_buf_s *, char *));
 
-extern int get_double_write_ratio(int dw_mode);
-
 bool is_support_no_parser(void);
+
+extern u32 timestamp_avsync_counter_get(void);
 
 int vdec_resource_checking(struct vdec_s *vdec);
 
-void set_meta_data_to_vf(struct vframe_s *vf, u32 type, void *v4l2_ctx);
 
 void vdec_set_profile_level(struct vdec_s *vdec, u32 profile_idc, u32 level_idc);
 
@@ -661,24 +628,10 @@ extern void vdec_stream_skip_data(struct vdec_s *vdec, int skip_size);
 void vdec_set_vld_wp(struct vdec_s *vdec, u32 wp);
 void vdec_config_vld_reg(struct vdec_s *vdec, u32 addr, u32 size);
 
-extern u32 timestamp_avsync_counter_get(void);
-
-void vdec_canvas_unlock(unsigned long flags);
-
-unsigned long vdec_canvas_lock(void);
-
-int vdec_get_core_nr(void);
-
-
-int vdec_post_task(post_task_handler func, void *args);
-
 void rdma_front_end_wrok(dma_addr_t ddr_phy_addr, u32 size);
-
 void rdma_back_end_work(dma_addr_t back_ddr_phy_addr, u32 size);
-
 int is_rdma_enable(void);
 
 st_userdata *get_vdec_userdata_ctx(void);
-
 
 #endif				/* VDEC_H */

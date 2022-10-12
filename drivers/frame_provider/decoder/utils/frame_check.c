@@ -25,8 +25,9 @@
 #include <linux/timer.h>
 #include <linux/kfifo.h>
 #include <linux/kthread.h>
-#include <linux/vmalloc.h>
 #include <linux/platform_device.h>
+#include <linux/amlogic/media/canvas/canvas.h>
+#include <linux/amlogic/media/canvas/canvas_mgr.h>
 #include <linux/amlogic/media/vfm/vframe.h>
 #include <linux/amlogic/media/codec_mm/codec_mm.h>
 #include <linux/dma-mapping.h>
@@ -71,7 +72,7 @@ static unsigned int size_yuv_buf = (YUV_DEF_SIZE * YUV_DEF_NUM);
 #define dbg_print(mask, ...) do {					\
 			if ((fc_debug & mask) ||				\
 				(mask == FC_ERROR))					\
-				printk("[FRAME_CHECK] "__VA_ARGS__);\
+				printk("[FRMAE_CHECK] "__VA_ARGS__);\
 		} while(0)
 
 
@@ -166,18 +167,6 @@ static bool is_oversize(int w, int h)
 	return false;
 }
 
-unsigned long vdec_cav_get_addr(int index);
-unsigned int vdec_cav_get_width(int index);
-unsigned int vdec_cav_get_height(int index);
-#define canvas_0(v) ((v) & 0xff)
-#define canvas_1(v) (((v) >> 8) & 0xff)
-#define canvas_2(v) (((v) >> 16) & 0xff)
-#define canvas_3(v) (((v) >> 24) & 0xff)
-
-#define canvasY(v) canvas_0(v)
-#define canvasU(v) canvas_1(v)
-#define canvasV(v) canvas_2(v)
-#define canvasUV(v) canvas_1(v)
 
 static int get_frame_size(struct pic_check_mgr_t *pic,
 	struct vframe_s *vf)
@@ -199,10 +188,10 @@ static int get_frame_size(struct pic_check_mgr_t *pic,
 	if ((vf->canvas0Addr == vf->canvas1Addr) &&
 		(vf->canvas0Addr != 0) &&
 		(vf->canvas0Addr != -1)) {
-		pic->canvas_w = vdec_cav_get_width(canvasY(vf->canvas0Addr));
-			//canvas_get_width(canvasY(vf->canvas0Addr));
-		pic->canvas_h = vdec_cav_get_height(canvasY(vf->canvas0Addr));
-			//canvas_get_height(canvasY(vf->canvas0Addr));
+		pic->canvas_w =
+			canvas_get_width(canvasY(vf->canvas0Addr));
+		pic->canvas_h =
+			canvas_get_height(canvasY(vf->canvas0Addr));
 	} else {
 		pic->canvas_w = vf->canvas0_config[0].width;
 		pic->canvas_h = vf->canvas0_config[0].height;
@@ -232,8 +221,8 @@ static int canvas_get_virt_addr(struct pic_check_mgr_t *pic,
 	if ((vf->canvas0Addr == vf->canvas1Addr) &&
 		(vf->canvas0Addr != 0) &&
 		(vf->canvas0Addr != -1)) {
-		phy_y_addr = vdec_cav_get_addr(canvasY(vf->canvas0Addr)); //canvas_get_addr(canvasY(vf->canvas0Addr));
-		phy_uv_addr = vdec_cav_get_addr(canvasUV(vf->canvas0Addr)); //canvas_get_addr(canvasUV(vf->canvas0Addr));
+		phy_y_addr = canvas_get_addr(canvasY(vf->canvas0Addr));
+		phy_uv_addr = canvas_get_addr(canvasU(vf->canvas0Addr));
 	} else {
 		phy_y_addr = vf->canvas0_config[0].phy_addr;
 		phy_uv_addr = vf->canvas0_config[1].phy_addr;
@@ -437,13 +426,15 @@ static int write_yuv_work(struct pic_check_mgr_t *mgr)
 static int write_crc_work(struct pic_check_mgr_t *mgr)
 {
 	unsigned int wr_size;
-	char *crc_buf, *crc_tmp = NULL;
+	char *crc_buf, *crc_tmp;
 	mm_segment_t old_fs;
 	struct pic_check_t *check = &mgr->pic_check;
 
-	crc_tmp = (char *)vzalloc(64 * 30);
-	if (!crc_tmp)
-		return -1;
+	crc_tmp = (char *)vmalloc(64*32);
+	if (!crc_tmp) {
+		dbg_print(0, "%s, vmalloc tmp buf failed\n", __func__);
+		return -ENOMEM;
+	}
 
 	if (mgr->enable & CRC_MASK) {
 		wr_size = 0;
@@ -470,15 +461,24 @@ static int write_crc_work(struct pic_check_mgr_t *mgr)
 	}
 
 	vfree(crc_tmp);
+	crc_tmp = NULL;
+
 	return 0;
 }
+
 
 static int write_aux_data_crc_work(struct aux_data_check_mgr_t *mgr)
 {
 	unsigned int wr_size;
-	char *crc_buf, crc_tmp[64*30];
+	char *crc_buf, *crc_tmp;
 	mm_segment_t old_fs;
 	struct aux_data_check_t *check = &mgr->aux_data_check;
+
+	crc_tmp = (char *)vmalloc(64*32);
+	if (!crc_tmp) {
+		dbg_print(0, "%s, vmalloc tmp buf failed\n", __func__);
+		return -ENOMEM;
+	}
 
 	if (mgr->enable & AUX_MASK) {
 		wr_size = 0;
@@ -503,8 +503,14 @@ static int write_aux_data_crc_work(struct aux_data_check_mgr_t *mgr)
 			set_fs(old_fs);
 		}
 	}
+
+	vfree(crc_tmp);
+	crc_tmp = NULL;
+
 	return 0;
 }
+
+
 
 static void do_check_work(struct work_struct *work)
 {
@@ -1123,10 +1129,6 @@ int decoder_do_frame_check(struct vdec_s *vdec, struct vframe_s *vf)
 		single_mode_vdec = NULL;
 	}
 
-	if (!single_mode_vdec &&
-		unlikely(in_interrupt()))
-		return 0;
-
 	if ((mgr == NULL) || (vf == NULL) ||
 		(mgr->enable == 0))
 		return 0;
@@ -1149,8 +1151,7 @@ int decoder_do_frame_check(struct vdec_s *vdec, struct vframe_s *vf)
 		resize = 0;
 	mgr->last_size_pic = mgr->size_pic;
 
-	if ((vf->type & VIDTYPE_VIU_NV21) || (mgr->mjpeg_flag) ||
-		(vf->type & VIDTYPE_VIU_NV12)) {
+	if ((vf->type & VIDTYPE_VIU_NV21) || (mgr->mjpeg_flag)) {
 		int flush_size;
 
 		if (canvas_get_virt_addr(mgr, vf) < 0)

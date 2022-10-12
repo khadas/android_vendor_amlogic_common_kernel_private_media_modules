@@ -23,21 +23,17 @@
 #include "../../../amvdec_ports/vdec_drv_base.h"
 #include "../../../amvdec_ports/aml_vcodec_adapt.h"
 
+int vdec_v4l_get_buffer(
+	struct aml_vcodec_ctx *ctx,
+	struct vdec_v4l2_buffer **out);
+
 int vdec_v4l_get_pic_info(
 	struct aml_vcodec_ctx *ctx,
 	struct vdec_pic_info *pic);
 
-int vdec_v4l_set_cfg_infos(
-	struct aml_vcodec_ctx *ctx,
-	struct aml_vdec_cfg_infos *cfg);
-
 int vdec_v4l_set_ps_infos(
 	struct aml_vcodec_ctx *ctx,
 	struct aml_vdec_ps_infos *ps);
-
-int vdec_v4l_set_comp_buf_info(
-	struct aml_vcodec_ctx *ctx,
-	struct vdec_comp_buf_info *info);
 
 int vdec_v4l_set_hdr_infos(
 	struct aml_vcodec_ctx *ctx,
@@ -52,9 +48,5 @@ int vdec_v4l_post_evet(
 
 int vdec_v4l_res_ch_event(
 	struct aml_vcodec_ctx *ctx);
-
-int vdec_v4l_get_dw_mode(
-	struct aml_vcodec_ctx *ctx,
-	unsigned int *dw_mode);
 
 #endif

@@ -48,9 +48,8 @@
 #include <linux/reset.h>
 #include <linux/of_gpio.h>
 #include <linux/amlogic/media/utils/amstream.h>
-#include <linux/amlogic/media/registers/cpu_version.h>
+#include <linux/amlogic/cpu_version.h>
 #include <linux/clk.h>
-#include <linux/of_irq.h>
 #include "c_stb_define.h"
 #include "c_stb_regs_define.h"
 #include "aml_dvb.h"
@@ -174,7 +173,8 @@ static void aml_dvb_dmx_release(struct aml_dvb *advb, struct aml_dmx *dmx)
 static int aml_dvb_dmx_init(struct aml_dvb *advb, struct aml_dmx *dmx, int id)
 {
 	int i, ret;
-	struct device_node *node_dmx = NULL;
+
+	struct resource *res;
 	char buf[32];
 
 	switch (id) {
@@ -188,19 +188,13 @@ static int aml_dvb_dmx_init(struct aml_dvb *advb, struct aml_dmx *dmx, int id)
 		dmx->dmx_irq = INT_DEMUX_2;
 		break;
 	}
-	memset(buf, 0, 32);
-	snprintf(buf, sizeof(buf), "dmx");
-	node_dmx = of_parse_phandle(advb->pdev->dev.of_node, buf, 0);
-	if (node_dmx) {
-		memset(buf, 0, sizeof(buf));
-		snprintf(buf, sizeof(buf), "demux%d_irq", id);
-		ret = of_irq_get_byname(node_dmx, buf);
-		if (ret > 0)
-			dmx->dmx_irq = ret;
-		printk("get irq num demux%d_irq:%d\n",id,dmx->dmx_irq);
-	} else {
-		printk("get default demux%d_irq:%d\n",id,dmx->dmx_irq);
-	}
+
+	snprintf(buf, sizeof(buf), "demux%d_irq", id);
+	res = platform_get_resource_byname(advb->pdev, IORESOURCE_IRQ, buf);
+	if (res)
+		dmx->dmx_irq = res->start;
+
+	pr_dbg("%s irq num:%d \r\n", buf, dmx->dmx_irq);
 
 	dmx->source = -1;
 	dmx->dump_ts_select = 0;
@@ -486,7 +480,7 @@ static int dvb_dsc_do_ioctl(struct file *file, unsigned int cmd,
 		dsc_reset(dsc);
 		break;
 	case CA_GET_CAP: {
-		struct ca_caps *cap = parg;
+		ca_caps_t *cap = parg;
 
 		cap->slot_num   = 1;
 		cap->slot_type  = CA_DESCR;
@@ -495,7 +489,7 @@ static int dvb_dsc_do_ioctl(struct file *file, unsigned int cmd,
 		break;
 	}
 	case CA_GET_SLOT_INFO: {
-		struct ca_slot_info *slot = parg;
+		ca_slot_info_t *slot = parg;
 
 		slot->num   = 1;
 		slot->type  = CA_DESCR;
@@ -503,14 +497,14 @@ static int dvb_dsc_do_ioctl(struct file *file, unsigned int cmd,
 		break;
 	}
 	case CA_GET_DESCR_INFO: {
-		struct ca_descr_info *descr = parg;
+		ca_descr_info_t *descr = parg;
 
 		descr->num  = DSC_COUNT;
 		descr->type = 0;
 		break;
 	}
 	case CA_SET_DESCR: {
-		struct ca_descr    *d = parg;
+		ca_descr_t    *d = parg;
 		struct ca_descr_ex  dex;
 
 		dex.index = d->index;
@@ -523,7 +517,7 @@ static int dvb_dsc_do_ioctl(struct file *file, unsigned int cmd,
 		break;
 	}
 	case CA_SET_PID: {
-		struct ca_pid *pi = parg;
+		ca_pid_t *pi = parg;
 		int i;
 
 		if (pi->index == -1) {
@@ -689,9 +683,8 @@ static struct dvb_device dvbdev_dsc = {
 static int aml_dvb_asyncfifo_init(struct aml_dvb *advb,
 				  struct aml_asyncfifo *asyncfifo, int id)
 {
+	struct resource *res;
 	char buf[32];
-	int ret = 0;
-	struct device_node *node_dmx = NULL;
 
 	if (id == 0)
 		asyncfifo->asyncfifo_irq = INT_ASYNC_FIFO_FLUSH;
@@ -700,19 +693,11 @@ static int aml_dvb_asyncfifo_init(struct aml_dvb *advb,
 	else
 		asyncfifo->asyncfifo_irq = INT_ASYNC_FIFO2_FLUSH;
 
-	memset(buf, 0, 32);
-	snprintf(buf, sizeof(buf), "dmx");
-	node_dmx = of_parse_phandle(advb->pdev->dev.of_node, buf, 0);
-	if (node_dmx) {
-		memset(buf, 0, sizeof(buf));
-		snprintf(buf, sizeof(buf), "dvr%d_irq", id);
-		ret = of_irq_get_byname(node_dmx, buf);
-		if (ret > 0)
-			asyncfifo->asyncfifo_irq = ret;
-		printk("get async%d_irq:%d\n",id,asyncfifo->asyncfifo_irq);
-	} else {
-		printk("get default async%d_irq:%d\n",id,asyncfifo->asyncfifo_irq);
-	}
+	snprintf(buf, sizeof(buf), "dvr%d_irq", id);
+	res = platform_get_resource_byname(advb->pdev, IORESOURCE_IRQ, buf);
+	if (res)
+		asyncfifo->asyncfifo_irq = res->start;
+	pr_dbg("%s irq num:%d \n", buf, asyncfifo->asyncfifo_irq);
 	asyncfifo->dvb = advb;
 	asyncfifo->id = id;
 	asyncfifo->init = 0;
@@ -761,7 +746,7 @@ static void aml_dvb_dsc_release(struct aml_dvb *advb,
 
 
 /*Show the STB input source*/
-static ssize_t source_show(struct class *class,
+static ssize_t stb_show_source(struct class *class,
 			       struct class_attribute *attr, char *buf)
 {
 	struct aml_dvb *dvb = &aml_dvb_device;
@@ -808,7 +793,7 @@ static ssize_t source_show(struct class *class,
 	return ret;
 }
 
-static ssize_t clear_av_store(struct class *class,
+static ssize_t stb_clear_av(struct class *class,
 				struct class_attribute *attr, const char *buf,
 				size_t size)
 {
@@ -869,7 +854,7 @@ static int stb_check_source(const char *buf)
 }
 
 /*Set the STB input source*/
-static ssize_t source_store(struct class *class,
+static ssize_t stb_store_source(struct class *class,
 				struct class_attribute *attr, const char *buf,
 				size_t size)
 {
@@ -901,7 +886,7 @@ static ssize_t source_store(struct class *class,
 	return size;
 }
 
-static ssize_t demux_reset_all_flag_show(struct class *class,
+static ssize_t show_dmx_reset_all_flag(struct class *class,
 			       struct class_attribute *attr, char *buf)
 {
 	ssize_t ret = 0;
@@ -914,7 +899,7 @@ static ssize_t demux_reset_all_flag_show(struct class *class,
 	ret = sprintf(buf, "%s\n", src);
 	return ret;
 }
-static ssize_t demux_reset_all_flag_store(struct class *class,
+static ssize_t set_dmx_reset_all_flag(struct class *class,
 				struct class_attribute *attr, const char *buf,
 				size_t size)
 {
@@ -929,7 +914,7 @@ static ssize_t demux_reset_all_flag_store(struct class *class,
 
 /*Show the descrambler's input source*/
 #define DSC_SOURCE_FUNC_DECL(i)  \
-static ssize_t dsc##i##_source_show(struct class *class,  \
+static ssize_t dsc##i##_show_source(struct class *class,  \
 				struct class_attribute *attr, char *buf)\
 {\
 	struct aml_dvb *dvb = &aml_dvb_device;\
@@ -967,7 +952,7 @@ static ssize_t dsc##i##_source_show(struct class *class,  \
 	ret = sprintf(buf, "%s-%s\n", src, dst);\
 	return ret;\
 } \
-static ssize_t dsc##i##_source_store(struct class *class,  \
+static ssize_t dsc##i##_store_source(struct class *class,  \
 		struct class_attribute *attr, const char *buf, size_t size)\
 {\
 	dmx_source_t src = -1, dst = -1;\
@@ -996,7 +981,7 @@ static ssize_t dsc##i##_source_store(struct class *class,  \
 
 /*Show free descramblers count*/
 #define DSC_FREE_FUNC_DECL(i)  \
-static ssize_t dsc##i##_free_dscs_show(struct class *class, \
+static ssize_t dsc##i##_show_free_dscs(struct class *class, \
 				  struct class_attribute *attr, char *buf) \
 { \
 	struct aml_dvb *dvb = &aml_dvb_device; \
@@ -1026,7 +1011,7 @@ static ssize_t dsc##i##_free_dscs_show(struct class *class, \
 #endif
 
 /*Show the TS output source*/
-static ssize_t tso_source_show(struct class *class,
+static ssize_t tso_show_source(struct class *class,
 			       struct class_attribute *attr, char *buf)
 {
 	struct aml_dvb *dvb = &aml_dvb_device;
@@ -1071,7 +1056,7 @@ static ssize_t tso_source_show(struct class *class,
 }
 
 /*Set the TS output source*/
-static ssize_t tso_source_store(struct class *class,
+static ssize_t tso_store_source(struct class *class,
 				struct class_attribute *attr, const char *buf,
 				size_t size)
 {
@@ -1101,7 +1086,7 @@ static ssize_t tso_source_store(struct class *class,
 
 /*Show PCR*/
 #define DEMUX_PCR_FUNC_DECL(i)  \
-static ssize_t demux##i##_pcr_show(struct class *class,  \
+static ssize_t demux##i##_show_pcr(struct class *class,  \
 				struct class_attribute *attr, char *buf)\
 {\
 	int f = 0;\
@@ -1163,7 +1148,7 @@ static int dmx_check_source(int i, const char *buf)
 
 /*Show the STB input source*/
 #define DEMUX_SOURCE_FUNC_DECL(i)  \
-static ssize_t demux##i##_source_show(struct class *class,  \
+static ssize_t demux##i##_show_source(struct class *class,  \
 				struct class_attribute *attr, char *buf)\
 {\
 	struct aml_dvb *dvb = &aml_dvb_device;\
@@ -1208,7 +1193,7 @@ static ssize_t demux##i##_source_show(struct class *class,  \
 	ret = sprintf(buf, "%s\n", src);\
 	return ret;\
 } \
-static ssize_t demux##i##_source_store(struct class *class,  \
+static ssize_t demux##i##_store_source(struct class *class,  \
 		struct class_attribute *attr, const char *buf, size_t size)\
 {\
 	dmx_source_t src = -1;\
@@ -1243,7 +1228,7 @@ static ssize_t demux##i##_source_store(struct class *class,  \
 
 /*Show free filters count*/
 #define DEMUX_FREE_FILTERS_FUNC_DECL(i)  \
-static ssize_t demux##i##_free_filters_show(struct class *class,  \
+static ssize_t demux##i##_show_free_filters(struct class *class,  \
 				struct class_attribute *attr, char *buf)\
 {\
 	struct aml_dvb *dvb = &aml_dvb_device;\
@@ -1264,7 +1249,7 @@ static ssize_t demux##i##_free_filters_show(struct class *class,  \
 
 /*Show dmx dev open count*/
 #define DEMUX_DEV_USERS_FUNC_DECL(i)  \
-static ssize_t demux##i##_dev_users_show(struct class *class,  \
+static ssize_t demux##i##_show_dev_users(struct class *class,  \
 				struct class_attribute *attr, char *buf)\
 {\
 	struct aml_dvb *dvb = &aml_dvb_device;\
@@ -1361,7 +1346,7 @@ static ssize_t demux_state_show(struct class *class,
 
 /*Show filter users count*/
 #define DEMUX_FILTER_USERS_FUNC_DECL(i)  \
-static ssize_t demux##i##_filter_users_show(struct class *class,  \
+static ssize_t demux##i##_show_filter_users(struct class *class,  \
 				struct class_attribute *attr, char *buf)\
 {\
 	struct aml_dvb *dvb = &aml_dvb_device;\
@@ -1385,7 +1370,7 @@ static ssize_t demux##i##_filter_users_show(struct class *class,  \
 	ret = sprintf(buf, "%d\n", count);\
 	return ret;\
 } \
-static ssize_t demux##i##_filter_users_store(struct class *class,  \
+static ssize_t demux##i##_store_filter_used(struct class *class,  \
 		struct class_attribute *attr, const char *buf, size_t size)\
 {\
 	struct aml_dvb *dvb = &aml_dvb_device;\
@@ -1408,7 +1393,7 @@ static ssize_t demux##i##_filter_users_store(struct class *class,  \
 
 /*Show ts header*/
 #define DEMUX_TS_HEADER_FUNC_DECL(i)  \
-static ssize_t demux##i##_ts_header_show(struct class *class,  \
+static ssize_t demux##i##_show_ts_header(struct class *class,  \
 				struct class_attribute *attr, char *buf)\
 {\
 	int hdr = 0;\
@@ -1423,7 +1408,7 @@ static ssize_t demux##i##_ts_header_show(struct class *class,  \
 
 /*Show channel activity*/
 #define DEMUX_CHANNEL_ACTIVITY_FUNC_DECL(i)  \
-static ssize_t demux##i##_channel_activity_show(struct class *class,  \
+static ssize_t demux##i##_show_channel_activity(struct class *class,  \
 				struct class_attribute *attr, char *buf)\
 {\
 	int f = 0;\
@@ -1451,7 +1436,7 @@ static ssize_t demux##i##_reset_store(struct class *class,  \
 
 /*DVR record mode*/
 #define DVR_MODE_FUNC_DECL(i)  \
-static ssize_t dvr##i##_mode_show(struct class *class,  \
+static ssize_t dvr##i##_show_mode(struct class *class,  \
 				struct class_attribute *attr, char *buf)\
 {\
 	struct aml_dvb *dvb = &aml_dvb_device;\
@@ -1466,7 +1451,7 @@ static ssize_t dvr##i##_mode_show(struct class *class,  \
 	ret = sprintf(buf, "%s\n", mode);\
 	return ret;\
 } \
-static ssize_t dvr##i##_mode_store(struct class *class,  \
+static ssize_t dvr##i##_store_mode(struct class *class,  \
 		struct class_attribute *attr, const char *buf, size_t size)\
 {\
 	struct aml_dvb *dvb = &aml_dvb_device;\
@@ -1521,7 +1506,7 @@ static ssize_t dvr##i##_mode_store(struct class *class,  \
 
 /*Show the async fifo source*/
 #define ASYNCFIFO_SOURCE_FUNC_DECL(i)  \
-static ssize_t asyncfifo##i##_source_show(struct class *class,  \
+static ssize_t asyncfifo##i##_show_source(struct class *class,  \
 				struct class_attribute *attr, char *buf)\
 {\
 	struct aml_dvb *dvb = &aml_dvb_device;\
@@ -1547,7 +1532,7 @@ static ssize_t asyncfifo##i##_source_show(struct class *class,  \
 	ret = sprintf(buf, "%s\n", src);\
 	return ret;\
 } \
-static ssize_t asyncfifo##i##_source_store(struct class *class,  \
+static ssize_t asyncfifo##i##_store_source(struct class *class,  \
 		struct class_attribute *attr, const char *buf, size_t size)\
 {\
 	enum aml_dmx_id_t src = -1;\
@@ -1580,7 +1565,7 @@ ASYNCFIFO_SOURCE_FUNC_DECL(0)
 
 /*Show the async fifo flush size*/
 #define ASYNCFIFO_FLUSHSIZE_FUNC_DECL(i)  \
-static ssize_t asyncfifo##i##_flush_size_show(struct class *class,  \
+static ssize_t asyncfifo##i##_show_flush_size(struct class *class,  \
 				struct class_attribute *attr, char *buf)\
 {\
 	struct aml_dvb *dvb = &aml_dvb_device;\
@@ -1591,7 +1576,7 @@ static ssize_t asyncfifo##i##_flush_size_show(struct class *class,  \
 	ret = sprintf(buf, "%d\n", afifo->flush_size);\
 	return ret;\
 } \
-static ssize_t asyncfifo##i##_flush_size_store(struct class *class,  \
+static ssize_t asyncfifo##i##_store_flush_size(struct class *class,  \
 					struct class_attribute *attr, \
 					const char *buf, size_t size)\
 {\
@@ -1627,7 +1612,7 @@ ASYNCFIFO_FLUSHSIZE_FUNC_DECL(0)
 
 /*Show the async fifo secure buffer addr*/
 #define ASYNCFIFO_SECUREADDR_FUNC_DECL(i)  \
-static ssize_t asyncfifo##i##_secure_addr_show(struct class *class,  \
+static ssize_t asyncfifo##i##_show_secure_addr(struct class *class,  \
 				struct class_attribute *attr, char *buf)\
 {\
 	struct aml_dvb *dvb = &aml_dvb_device;\
@@ -1638,7 +1623,7 @@ static ssize_t asyncfifo##i##_secure_addr_show(struct class *class,  \
 	ret = sprintf(buf, "0x%x\n", afifo->blk.addr);\
 	return ret;\
 } \
-static ssize_t asyncfifo##i##_secure_addr_store(struct class *class,  \
+static ssize_t asyncfifo##i##_store_secure_addr(struct class *class,  \
 					struct class_attribute *attr, \
 const char *buf, size_t size)\
 {\
@@ -1670,7 +1655,7 @@ const char *buf, size_t size)\
 
 /*Show the async fifo secure buffer size*/
 #define ASYNCFIFO_SECUREADDR_SIZE_FUNC_DECL(i)  \
-static ssize_t asyncfifo##i##_secure_addr_size_show(struct class *class,  \
+static ssize_t asyncfifo##i##_show_secure_addr_size(struct class *class,  \
 				struct class_attribute *attr, char *buf)\
 {\
 	struct aml_dvb *dvb = &aml_dvb_device;\
@@ -1681,7 +1666,7 @@ static ssize_t asyncfifo##i##_secure_addr_size_show(struct class *class,  \
 	ret = sprintf(buf, "0x%x\n", afifo->blk.len);\
 	return ret;\
 } \
-static ssize_t asyncfifo##i##_secure_addr_size_store(struct class *class,  \
+static ssize_t asyncfifo##i##_store_secure_addr_size(struct class *class,  \
 					struct class_attribute *attr, \
 const char *buf, size_t size)\
 {\
@@ -1714,7 +1699,7 @@ const char *buf, size_t size)\
 
 /*Show the async fifo secure enable*/
 #define ASYNCFIFO_SECURENABLE_FUNC_DECL(i)  \
-static ssize_t asyncfifo##i##_secure_enable_show(struct class *class,  \
+static ssize_t asyncfifo##i##_show_secure_enable(struct class *class,  \
 				struct class_attribute *attr, char *buf)\
 {\
 	struct aml_dvb *dvb = &aml_dvb_device;\
@@ -1725,7 +1710,7 @@ static ssize_t asyncfifo##i##_secure_enable_show(struct class *class,  \
 	ret = sprintf(buf, "%d\n", afifo->secure_enable);\
 	return ret;\
 } \
-static ssize_t asyncfifo##i##_secure_enable_store(struct class *class,  \
+static ssize_t asyncfifo##i##_store_secure_enable(struct class *class,  \
 					struct class_attribute *attr, \
 					const char *buf, size_t size)\
 {\
@@ -1759,7 +1744,7 @@ ASYNCFIFO_SECURENABLE_FUNC_DECL(0)
 #endif
 
 /*Reset the Demux*/
-static ssize_t demux_reset_store(struct class *class,
+static ssize_t demux_do_reset(struct class *class,
 				struct class_attribute *attr,
 				const char *buf, size_t size)
 {
@@ -1768,7 +1753,7 @@ static ssize_t demux_reset_store(struct class *class,
 		unsigned long flags;
 
 		spin_lock_irqsave(&dvb->slock, flags);
-		pr_dbg("Reset demux, call dmx_reset_hw\n");
+		pr_inf("Reset demux, call dmx_reset_hw\n");
 		dmx_reset_hw_ex(dvb, 0);
 		spin_unlock_irqrestore(&dvb->slock, flags);
 	}
@@ -1777,7 +1762,7 @@ static ssize_t demux_reset_store(struct class *class,
 }
 
 /*Show the Video PTS value*/
-static ssize_t video_pts_show(struct class *class,
+static ssize_t demux_show_video_pts(struct class *class,
 				    struct class_attribute *attr, char *buf)
 {
 	struct aml_dvb *dvb = &aml_dvb_device;
@@ -1789,7 +1774,7 @@ static ssize_t video_pts_show(struct class *class,
 }
 
 /*Show the Audio PTS value*/
-static ssize_t audio_pts_show(struct class *class,
+static ssize_t demux_show_audio_pts(struct class *class,
 				    struct class_attribute *attr, char *buf)
 {
 	struct aml_dvb *dvb = &aml_dvb_device;
@@ -1801,7 +1786,7 @@ static ssize_t audio_pts_show(struct class *class,
 }
 
 /*Show the Video PTS bit32 value*/
-static ssize_t video_pts_bit32_show(struct class *class,
+static ssize_t demux_show_video_pts_bit32(struct class *class,
 				struct class_attribute *attr, char *buf)
 {
 	struct aml_dvb *dvb = &aml_dvb_device;
@@ -1813,7 +1798,7 @@ static ssize_t video_pts_bit32_show(struct class *class,
 }
 
 /*Show the Audio PTS bit32 value*/
-static ssize_t audio_pts_bit32_show(struct class *class,
+static ssize_t demux_show_audio_pts_bit32(struct class *class,
 				struct class_attribute *attr, char *buf)
 {
 	struct aml_dvb *dvb = &aml_dvb_device;
@@ -1825,7 +1810,7 @@ static ssize_t audio_pts_bit32_show(struct class *class,
 }
 
 /*Show the 33bit Video PTS value*/
-static ssize_t video_pts_u64_show(struct class *class,
+static ssize_t demux_show_video_pts_u64(struct class *class,
 				struct class_attribute *attr, char *buf)
 {
 	struct aml_dvb *dvb = &aml_dvb_device;
@@ -1844,7 +1829,7 @@ static ssize_t video_pts_u64_show(struct class *class,
 }
 
 /*Show the 33bit Audio PTS value*/
-static ssize_t audio_pts_u64_show(struct class *class,
+static ssize_t demux_show_audio_pts_u64(struct class *class,
 				struct class_attribute *attr, char *buf)
 {
 	struct aml_dvb *dvb = &aml_dvb_device;
@@ -1863,7 +1848,7 @@ static ssize_t audio_pts_u64_show(struct class *class,
 }
 
 /*Show the First Video PTS value*/
-static ssize_t first_video_pts_show(struct class *class,
+static ssize_t demux_show_first_video_pts(struct class *class,
 					  struct class_attribute *attr,
 					  char *buf)
 {
@@ -1876,7 +1861,7 @@ static ssize_t first_video_pts_show(struct class *class,
 }
 
 /*Show the First Audio PTS value*/
-static ssize_t first_audio_pts_show(struct class *class,
+static ssize_t demux_show_first_audio_pts(struct class *class,
 					  struct class_attribute *attr,
 					  char *buf)
 {
@@ -1888,7 +1873,7 @@ static ssize_t first_audio_pts_show(struct class *class,
 	return ret;
 }
 
-static ssize_t hw_setting_show(struct class *class,
+static ssize_t stb_show_hw_setting(struct class *class,
 				   struct class_attribute *attr, char *buf)
 {
 	int r, total = 0;
@@ -1917,7 +1902,7 @@ static ssize_t hw_setting_show(struct class *class,
 	return total;
 }
 
-static ssize_t hw_setting_store(struct class *class,
+static ssize_t stb_store_hw_setting(struct class *class,
 				    struct class_attribute *attr,
 				    const char *buf, size_t count)
 {
@@ -1986,270 +1971,157 @@ static ssize_t hw_setting_store(struct class *class,
 	return count;
 }
 
-
-static CLASS_ATTR_RW(hw_setting);
-static CLASS_ATTR_RW(source);
-static CLASS_ATTR_RW(demux_reset_all_flag);
-static CLASS_ATTR_RW(tso_source);
+static struct class_attribute aml_stb_class_attrs[] = {
+	__ATTR(hw_setting, 0664, stb_show_hw_setting,
+	       stb_store_hw_setting),
+	__ATTR(source, 0664, stb_show_source,
+	       stb_store_source),
+	__ATTR(demux_reset_all_flag, 0664, show_dmx_reset_all_flag,
+	       set_dmx_reset_all_flag),
+	__ATTR(tso_source, 0644, tso_show_source,
+	       tso_store_source),
 #define DEMUX_SOURCE_ATTR_PCR(i)\
-	static CLASS_ATTR_RO(demux##i##_pcr)
+	__ATTR(demux##i##_pcr,  0644, demux##i##_show_pcr, NULL)
 #define DEMUX_SOURCE_ATTR_DECL(i)\
-	static CLASS_ATTR_RW(demux##i##_source)
+	__ATTR(demux##i##_source,  0664,\
+	demux##i##_show_source, demux##i##_store_source)
 #define DEMUX_FREE_FILTERS_ATTR_DECL(i)\
-	static CLASS_ATTR_RO(demux##i##_free_filters)
+	__ATTR(demux##i##_free_filters,  0644, \
+	demux##i##_show_free_filters, NULL)
 #define DEMUX_FILTER_USERS_ATTR_DECL(i)\
-	static CLASS_ATTR_RW(demux##i##_filter_users)
+	__ATTR(demux##i##_filter_users,  0644, \
+	demux##i##_show_filter_users, demux##i##_store_filter_used)
 #define DEMUX_DEV_USERS_ATTR_DECL(i)\
-	static CLASS_ATTR_RO(demux##i##_dev_users)
+	__ATTR(demux##i##_dev_users,  0644, \
+	demux##i##_show_dev_users, NULL)
 #define DVR_MODE_ATTR_DECL(i)\
-	static CLASS_ATTR_RW(dvr##i##_mode)
+	__ATTR(dvr##i##_mode,  0644, dvr##i##_show_mode, \
+	dvr##i##_store_mode)
 #define DEMUX_TS_HEADER_ATTR_DECL(i)\
-	static CLASS_ATTR_RO(demux##i##_ts_header)
+	__ATTR(demux##i##_ts_header,  0644, \
+	demux##i##_show_ts_header, NULL)
 #define DEMUX_CHANNEL_ACTIVITY_ATTR_DECL(i)\
-	static CLASS_ATTR_RO(demux##i##_channel_activity)
+	__ATTR(demux##i##_channel_activity,  0644, \
+	demux##i##_show_channel_activity, NULL)
 #define DMX_RESET_ATTR_DECL(i)\
-	static CLASS_ATTR_WO(demux##i##_reset)
+	__ATTR(demux##i##_reset,  0644, NULL, \
+	demux##i##_reset_store)
 
 #if DMX_DEV_COUNT > 0
-	DEMUX_SOURCE_ATTR_PCR(0);
-	DEMUX_SOURCE_ATTR_DECL(0);
-	DEMUX_FREE_FILTERS_ATTR_DECL(0);
-	DEMUX_FILTER_USERS_ATTR_DECL(0);
-	DEMUX_DEV_USERS_ATTR_DECL(0);
-	DVR_MODE_ATTR_DECL(0);
-	DEMUX_TS_HEADER_ATTR_DECL(0);
-	DEMUX_CHANNEL_ACTIVITY_ATTR_DECL(0);
-	DMX_RESET_ATTR_DECL(0);
+	DEMUX_SOURCE_ATTR_PCR(0),
+	DEMUX_SOURCE_ATTR_DECL(0),
+	DEMUX_FREE_FILTERS_ATTR_DECL(0),
+	DEMUX_FILTER_USERS_ATTR_DECL(0),
+	DEMUX_DEV_USERS_ATTR_DECL(0),
+	DVR_MODE_ATTR_DECL(0),
+	DEMUX_TS_HEADER_ATTR_DECL(0),
+	DEMUX_CHANNEL_ACTIVITY_ATTR_DECL(0),
+	DMX_RESET_ATTR_DECL(0),
 #endif
 #if DMX_DEV_COUNT > 1
-	DEMUX_SOURCE_ATTR_PCR(1);
-	DEMUX_SOURCE_ATTR_DECL(1);
-	DEMUX_FREE_FILTERS_ATTR_DECL(1);
-	DEMUX_FILTER_USERS_ATTR_DECL(1);
-	DEMUX_DEV_USERS_ATTR_DECL(1);
-	DVR_MODE_ATTR_DECL(1);
-	DEMUX_TS_HEADER_ATTR_DECL(1);
-	DEMUX_CHANNEL_ACTIVITY_ATTR_DECL(1);
-	DMX_RESET_ATTR_DECL(1);
+	DEMUX_SOURCE_ATTR_PCR(1),
+	DEMUX_SOURCE_ATTR_DECL(1),
+	DEMUX_FREE_FILTERS_ATTR_DECL(1),
+	DEMUX_FILTER_USERS_ATTR_DECL(1),
+	DEMUX_DEV_USERS_ATTR_DECL(1),
+	DVR_MODE_ATTR_DECL(1),
+	DEMUX_TS_HEADER_ATTR_DECL(1),
+	DEMUX_CHANNEL_ACTIVITY_ATTR_DECL(1),
+	DMX_RESET_ATTR_DECL(1),
 #endif
 #if DMX_DEV_COUNT > 2
-	DEMUX_SOURCE_ATTR_PCR(2);
-	DEMUX_SOURCE_ATTR_DECL(2);
-	DEMUX_FREE_FILTERS_ATTR_DECL(2);
-	DEMUX_FILTER_USERS_ATTR_DECL(2);
-	DEMUX_DEV_USERS_ATTR_DECL(2);
-	DVR_MODE_ATTR_DECL(2);
-	DEMUX_TS_HEADER_ATTR_DECL(2);
-	DEMUX_CHANNEL_ACTIVITY_ATTR_DECL(2);
-	DMX_RESET_ATTR_DECL(2);
+	DEMUX_SOURCE_ATTR_PCR(2),
+	DEMUX_SOURCE_ATTR_DECL(2),
+	DEMUX_FREE_FILTERS_ATTR_DECL(2),
+	DEMUX_FILTER_USERS_ATTR_DECL(2),
+	DEMUX_DEV_USERS_ATTR_DECL(2),
+	DVR_MODE_ATTR_DECL(2),
+	DEMUX_TS_HEADER_ATTR_DECL(2),
+	DEMUX_CHANNEL_ACTIVITY_ATTR_DECL(2),
+	DMX_RESET_ATTR_DECL(2),
 #endif
 
 #define ASYNCFIFO_SOURCE_ATTR_DECL(i)\
-	static CLASS_ATTR_RW(asyncfifo##i##_source)
+	__ATTR(asyncfifo##i##_source,  0664, \
+	asyncfifo##i##_show_source, asyncfifo##i##_store_source)
 #define ASYNCFIFO_FLUSHSIZE_ATTR_DECL(i)\
-	static CLASS_ATTR_RW(asyncfifo##i##_flush_size)
+	__ATTR(asyncfifo##i##_flush_size, 0664,\
+	asyncfifo##i##_show_flush_size, \
+	asyncfifo##i##_store_flush_size)
 #define ASYNCFIFO_SECUREADDR_ATTR_DECL(i)\
-	static CLASS_ATTR_RW(asyncfifo##i##_secure_addr)
+	__ATTR(asyncfifo##i##_secure_addr, S_IRUGO | S_IWUSR | S_IWGRP,\
+	asyncfifo##i##_show_secure_addr, \
+	asyncfifo##i##_store_secure_addr)
 #define ASYNCFIFO_SECUREADDR_SIZE_ATTR_DECL(i)\
-	static CLASS_ATTR_RW(asyncfifo##i##_secure_addr_size)
+	__ATTR(asyncfifo##i##_secure_addr_size, S_IRUGO | S_IWUSR | S_IWGRP,\
+	asyncfifo##i##_show_secure_addr_size, \
+	asyncfifo##i##_store_secure_addr_size)
 #define ASYNCFIFO_SECURENABLE_ATTR_DECL(i)\
-	static CLASS_ATTR_RW(asyncfifo##i##_secure_enable)
+	__ATTR(asyncfifo##i##_secure_enable, S_IRUGO | S_IWUSR | S_IWGRP,\
+	asyncfifo##i##_show_secure_enable, \
+	asyncfifo##i##_store_secure_enable)
 
 #if ASYNCFIFO_COUNT > 0
-	ASYNCFIFO_SOURCE_ATTR_DECL(0);
-	ASYNCFIFO_FLUSHSIZE_ATTR_DECL(0);
-	ASYNCFIFO_SECUREADDR_ATTR_DECL(0);
-	ASYNCFIFO_SECUREADDR_SIZE_ATTR_DECL(0);
-	ASYNCFIFO_SECURENABLE_ATTR_DECL(0);
+	ASYNCFIFO_SOURCE_ATTR_DECL(0),
+	ASYNCFIFO_FLUSHSIZE_ATTR_DECL(0),
+	ASYNCFIFO_SECUREADDR_ATTR_DECL(0),
+	ASYNCFIFO_SECUREADDR_SIZE_ATTR_DECL(0),
+	ASYNCFIFO_SECURENABLE_ATTR_DECL(0),
 #endif
 #if ASYNCFIFO_COUNT > 1
-	ASYNCFIFO_SOURCE_ATTR_DECL(1);
-	ASYNCFIFO_FLUSHSIZE_ATTR_DECL(1);
-	ASYNCFIFO_SECUREADDR_ATTR_DECL(1);
-	ASYNCFIFO_SECUREADDR_SIZE_ATTR_DECL(1);
-	ASYNCFIFO_SECURENABLE_ATTR_DECL(1);
+	ASYNCFIFO_SOURCE_ATTR_DECL(1),
+	ASYNCFIFO_FLUSHSIZE_ATTR_DECL(1),
+	ASYNCFIFO_SECUREADDR_ATTR_DECL(1),
+	ASYNCFIFO_SECUREADDR_SIZE_ATTR_DECL(1),
+	ASYNCFIFO_SECURENABLE_ATTR_DECL(1),
 #endif
 
 #if ASYNCFIFO_COUNT > 2
-	ASYNCFIFO_SOURCE_ATTR_DECL(2);
-	ASYNCFIFO_FLUSHSIZE_ATTR_DECL(2);
-	ASYNCFIFO_SECUREADDR_ATTR_DECL(2);
-	ASYNCFIFO_SECUREADDR_SIZE_ATTR_DECL(2);
-	ASYNCFIFO_SECURENABLE_ATTR_DECL(2);
+	ASYNCFIFO_SOURCE_ATTR_DECL(2),
+	ASYNCFIFO_FLUSHSIZE_ATTR_DECL(2),
+	ASYNCFIFO_SECUREADDR_ATTR_DECL(2),
+	ASYNCFIFO_SECUREADDR_SIZE_ATTR_DECL(2),
+	ASYNCFIFO_SECURENABLE_ATTR_DECL(2),
 #endif
 
-	static CLASS_ATTR_WO(demux_reset);
-	static CLASS_ATTR_RO(video_pts);
-	static CLASS_ATTR_RO(audio_pts);
-	static CLASS_ATTR_RO(video_pts_bit32);
-	static CLASS_ATTR_RO(audio_pts_bit32);
-	static CLASS_ATTR_RO(video_pts_u64);
-	static CLASS_ATTR_RO(audio_pts_u64);
-	static CLASS_ATTR_RO(first_video_pts);
-	static CLASS_ATTR_RO(first_audio_pts);
-	static CLASS_ATTR_WO(clear_av);
-	static CLASS_ATTR_RO(demux_state);
+	__ATTR(demux_reset, 0644, NULL, demux_do_reset),
+	__ATTR(video_pts, 0664, demux_show_video_pts,
+	       NULL),
+	__ATTR(audio_pts, 0664, demux_show_audio_pts,
+	       NULL),
+	__ATTR(video_pts_bit32, 0644, demux_show_video_pts_bit32, NULL),
+	__ATTR(audio_pts_bit32, 0644, demux_show_audio_pts_bit32, NULL),
+	__ATTR(video_pts_u64, 0644, demux_show_video_pts_u64, NULL),
+	__ATTR(audio_pts_u64, 0644, demux_show_audio_pts_u64, NULL),
+	__ATTR(first_video_pts, 0644, demux_show_first_video_pts,
+	       NULL),
+	__ATTR(first_audio_pts, 0644, demux_show_first_audio_pts,
+	       NULL),
+	__ATTR(clear_av, 0644, NULL, stb_clear_av),
+	__ATTR(demux_state, 0644, demux_state_show, NULL),
 
 #define DSC_SOURCE_ATTR_DECL(i)\
-	static CLASS_ATTR_RW(dsc##i##_source)
+	__ATTR(dsc##i##_source,  0664,\
+	dsc##i##_show_source, dsc##i##_store_source)
 #define DSC_FREE_ATTR_DECL(i) \
-	static CLASS_ATTR_RO(dsc##i##_free_dscs)
+	__ATTR(dsc##i##_free_dscs, 0644, \
+	dsc##i##_show_free_dscs, NULL)
 
 #if DSC_DEV_COUNT > 0
-	DSC_SOURCE_ATTR_DECL(0);
-	DSC_FREE_ATTR_DECL(0);
+	DSC_SOURCE_ATTR_DECL(0),
+	DSC_FREE_ATTR_DECL(0),
 #endif
 #if DSC_DEV_COUNT > 1
-	DSC_SOURCE_ATTR_DECL(1);
-	DSC_FREE_ATTR_DECL(1);
+	DSC_SOURCE_ATTR_DECL(1),
+	DSC_FREE_ATTR_DECL(1),
 #endif
 
-#define STB_ATTR(name) &class_attr_##name.attr
-
-static struct attribute *aml_stb_class_attrs[] = {
-	STB_ATTR(hw_setting),
-	STB_ATTR(source),
-	STB_ATTR(demux_reset_all_flag),
-	STB_ATTR(tso_source),
-	STB_ATTR(demux_reset),
-	STB_ATTR(video_pts),
-	STB_ATTR(audio_pts),
-	STB_ATTR(video_pts_bit32),
-	STB_ATTR(audio_pts_bit32),
-	STB_ATTR(video_pts_u64),
-	STB_ATTR(audio_pts_u64),
-	STB_ATTR(first_video_pts),
-	STB_ATTR(first_audio_pts),
-	STB_ATTR(clear_av),
-	STB_ATTR(demux_state),
-#define DEMUX_PCR(i) \
-	STB_ATTR(demux##i##_pcr)
-	DEMUX_PCR(0),
-	DEMUX_PCR(1),
-	DEMUX_PCR(2),
-#define DEMUX_SOURCE(i) \
-	STB_ATTR(demux##i##_source)
-	DEMUX_SOURCE(0),
-	DEMUX_SOURCE(1),
-	DEMUX_SOURCE(2),
-#define DEMUX_FREE_FILTER(i) \
-	STB_ATTR(demux##i##_free_filters)
-	DEMUX_FREE_FILTER(0),
-	DEMUX_FREE_FILTER(1),
-	DEMUX_FREE_FILTER(2),
-#define DEMUX_FILTER_USERS(i) \
-	STB_ATTR(demux##i##_filter_users)
-	DEMUX_FILTER_USERS(0),
-	DEMUX_FILTER_USERS(1),
-	DEMUX_FILTER_USERS(2),
-#define DEMUX_DEV_USERS(i) \
-	STB_ATTR(demux##i##_dev_users)
-	DEMUX_DEV_USERS(0),
-	DEMUX_DEV_USERS(1),
-	DEMUX_DEV_USERS(2),
-#define DEMUX_TS_HEADER(i) \
-	STB_ATTR(demux##i##_ts_header)
-	DEMUX_TS_HEADER(0),
-	DEMUX_TS_HEADER(1),
-	DEMUX_TS_HEADER(2),
-#define DEMUX_CHANNEL_ACTIVITY_ATTR(i) \
-	STB_ATTR(demux##i##_channel_activity)
-	DEMUX_CHANNEL_ACTIVITY_ATTR(0),
-	DEMUX_CHANNEL_ACTIVITY_ATTR(1),
-	DEMUX_CHANNEL_ACTIVITY_ATTR(2),
-#define DEMUX_RESET(i)	\
-	STB_ATTR(demux##i##_reset)
-	DEMUX_RESET(0),
-	DEMUX_RESET(1),
-	DEMUX_RESET(2),
-#define DVR_MODE(i)\
-	STB_ATTR(dvr##i##_mode)
-	DVR_MODE(0),
-	DVR_MODE(1),
-	DVR_MODE(2),
-#define ASYNCFIFO_SOURCE(i) \
-	STB_ATTR(asyncfifo##i##_source)
-#if ASYNCFIFO_COUNT > 0
-	ASYNCFIFO_SOURCE(0),
-#endif
-#if ASYNCFIFO_COUNT > 1
-	ASYNCFIFO_SOURCE(1),
-#endif
-#if ASYNCFIFO_COUNT > 2
-	ASYNCFIFO_SOURCE(2),
-#endif
-#define ASYNCFIFO_FLUSH_SIZE(i) \
-	STB_ATTR(asyncfifo##i##_flush_size)
-#if ASYNCFIFO_COUNT > 0
-	ASYNCFIFO_FLUSH_SIZE(0),
-#endif
-#if ASYNCFIFO_COUNT > 1
-	ASYNCFIFO_FLUSH_SIZE(1),
-#endif
-#if ASYNCFIFO_COUNT > 2
-	ASYNCFIFO_FLUSH_SIZE(2),
-#endif
-
-#define ASYNCFIFO_SECURE_ADDR(i) \
-	STB_ATTR(asyncfifo##i##_secure_addr)
-#if ASYNCFIFO_COUNT > 0
-	ASYNCFIFO_SECURE_ADDR(0),
-#endif
-#if ASYNCFIFO_COUNT > 1
-	ASYNCFIFO_SECURE_ADDR(1),
-#endif
-#if ASYNCFIFO_COUNT > 2
-	ASYNCFIFO_SECURE_ADDR(2),
-#endif
-
-#define ASYNCFIFO_SECURE_ADDR_SIZE(i) \
-	STB_ATTR(asyncfifo##i##_secure_addr_size)
-#if ASYNCFIFO_COUNT > 0
-	ASYNCFIFO_SECURE_ADDR_SIZE(0),
-#endif
-#if ASYNCFIFO_COUNT > 1
-	ASYNCFIFO_SECURE_ADDR_SIZE(1),
-#endif
-#if ASYNCFIFO_COUNT > 2
-	ASYNCFIFO_SECURE_ADDR_SIZE(2),
-#endif
-
-#define ASYNCFIFO_SECURE_ENABLE(i)\
-	STB_ATTR(asyncfifo##i##_secure_enable)
-#if ASYNCFIFO_COUNT > 0
-	ASYNCFIFO_SECURE_ENABLE(0),
-#endif
-#if ASYNCFIFO_COUNT > 1
-	ASYNCFIFO_SECURE_ENABLE(1),
-#endif
-#if ASYNCFIFO_COUNT > 2
-	ASYNCFIFO_SECURE_ENABLE(2),
-#endif
-#define DSC_SOURCE(i) \
-	STB_ATTR(dsc##i##_source)
-#if DSC_DEV_COUNT > 0
-	DSC_SOURCE(0),
-#endif
-#if DSC_DEV_COUNT > 1
-	DSC_SOURCE(1),
-#endif
-#define DSC_FREE_DSCS(i) \
-	STB_ATTR(dsc##i##_free_dscs)
-#if DSC_DEV_COUNT > 0
-	DSC_FREE_DSCS(0),
-#endif
-#if DSC_DEV_COUNT > 1
-	DSC_FREE_DSCS(1),
-#endif
-	NULL
+	__ATTR_NULL
 };
-
-
-ATTRIBUTE_GROUPS(aml_stb_class);
 
 static struct class aml_stb_class = {
 	.name = "stb",
-	.class_groups = aml_stb_class_groups,
+	.class_attrs = aml_stb_class_attrs,
 };
 
 /*
@@ -2273,6 +2145,30 @@ static int aml_dvb_probe(struct platform_device *pdev)
 	struct devio_aml_platform_data *pd_dvb;
 
 	pr_inf("probe amlogic dvb driver [%s]\n", DVB_VERSION);
+
+	/*switch_mod_gate_by_name("demux", 1); */
+#if 0
+	/*no used reset ctl to set clk*/
+	aml_dvb_demux_reset_ctl =
+		devm_reset_control_get(&pdev->dev, "demux");
+	pr_inf("dmx rst ctl = %p\n", aml_dvb_demux_reset_ctl);
+	reset_control_deassert(aml_dvb_demux_reset_ctl);
+
+	aml_dvb_afifo_reset_ctl =
+		devm_reset_control_get(&pdev->dev, "asyncfifo");
+	pr_inf("asyncfifo rst ctl = %p\n", aml_dvb_afifo_reset_ctl);
+	reset_control_deassert(aml_dvb_afifo_reset_ctl);
+
+	aml_dvb_ahbarb0_reset_ctl =
+		devm_reset_control_get(&pdev->dev, "ahbarb0");
+	pr_inf("ahbarb0 rst ctl = %p\n", aml_dvb_ahbarb0_reset_ctl);
+	reset_control_deassert(aml_dvb_ahbarb0_reset_ctl);
+
+	aml_dvb_uparsertop_reset_ctl =
+		devm_reset_control_get(&pdev->dev, "uparsertop");
+	pr_inf("uparsertop rst ctl = %p\n", aml_dvb_uparsertop_reset_ctl);
+	reset_control_deassert(aml_dvb_uparsertop_reset_ctl);
+#else
 
 	if (get_cpu_type() < MESON_CPU_MAJOR_ID_G12A)
 	{
@@ -2317,13 +2213,14 @@ static int aml_dvb_probe(struct platform_device *pdev)
 		{
 			aml_dvb_afifo_clk =
 				devm_clk_get(&pdev->dev, "asyncfifo");
-			if (IS_ERR_OR_NULL(aml_dvb_afifo_clk))
+			if (IS_ERR_OR_NULL(aml_dvb_afifo_clk)) {
 				dev_err(&pdev->dev, "get asyncfifo clk fail\n");
-			else
-				clk_prepare_enable(aml_dvb_afifo_clk);
+				return -1;
+			}
+			clk_prepare_enable(aml_dvb_afifo_clk);
 		}
 	}
-
+#endif
 	advb = &aml_dvb_device;
 	memset(advb, 0, sizeof(aml_dvb_device));
 
@@ -2368,7 +2265,7 @@ static int aml_dvb_probe(struct platform_device *pdev)
 						    &str);
 			if (!ret) {
 				if (!strcmp(str, "serial")) {
-					pr_inf("%s: serial\n", buf);
+					pr_dbg("%s: serial\n", buf);
 
 					if (s2p_id >= advb->s2p_total_count)
 						pr_error("no free s2p\n");
@@ -2384,7 +2281,7 @@ static int aml_dvb_probe(struct platform_device *pdev)
 						s2p_id++;
 					}
 				} else if (!strcmp(str, "parallel")) {
-					pr_inf("%s: parallel\n", buf);
+					pr_dbg("%s: parallel\n", buf);
 					memset(buf, 0, 32);
 					snprintf(buf, sizeof(buf), "p_ts%d", i);
 					advb->ts[i].mode = AM_TS_PARALLEL;
@@ -2405,10 +2302,10 @@ static int aml_dvb_probe(struct platform_device *pdev)
 			    of_property_read_u32(pdev->dev.of_node, buf,
 						 &value);
 			if (!ret) {
-				pr_inf("%s: 0x%x\n", buf, value);
+				pr_dbg("%s: 0x%x\n", buf, value);
 				advb->ts[i].control = value;
 			} else {
-				pr_inf("read error:%s: 0x%x\n", buf, value);
+				pr_dbg("read error:%s: 0x%x\n", buf, value);
 			}
 
 			if (advb->ts[i].s2p_id != -1) {
@@ -2418,7 +2315,7 @@ static int aml_dvb_probe(struct platform_device *pdev)
 				    of_property_read_u32(pdev->dev.of_node, buf,
 							 &value);
 				if (!ret) {
-					pr_inf("%s: 0x%x\n", buf, value);
+					pr_dbg("%s: 0x%x\n", buf, value);
 					advb->s2p[advb->ts[i].s2p_id].invert =
 					    value;
 				}
@@ -2430,7 +2327,7 @@ static int aml_dvb_probe(struct platform_device *pdev)
 			of_property_read_u32(pdev->dev.of_node, buf,
 				&value);
 		if (!ret) {
-			pr_inf("%s: 0x%x\n", buf, value);
+			pr_dbg("%s: 0x%x\n", buf, value);
 				advb->ts_out_invert = value;
 		}
 	}
@@ -2489,8 +2386,7 @@ static int aml_dvb_probe(struct platform_device *pdev)
 	tsdemux_set_ops(NULL);
 #endif
 
-#if (defined CONFIG_AMLOGIC_DVB_EXTERN ||\
-		defined CONFIG_AMLOGIC_DVB_EXTERN_MODULE)
+#if (defined CONFIG_AMLOGIC_DVB_EXTERN)
 	ret = dvb_extern_register_frontend(&advb->dvb_adapter);
 	if (ret) {
 		pr_error("aml register dvb frontend failed\n");
@@ -2520,7 +2416,6 @@ error:
 
 	return ret;
 }
-
 static int aml_dvb_remove(struct platform_device *pdev)
 {
 	struct aml_dvb *advb = (struct aml_dvb *)dev_get_drvdata(&pdev->dev);
@@ -2528,8 +2423,7 @@ static int aml_dvb_remove(struct platform_device *pdev)
 
 	pr_inf("[dmx_kpi] %s Enter.\n", __func__);
 
-#if (defined CONFIG_AMLOGIC_DVB_EXTERN ||\
-		defined CONFIG_AMLOGIC_DVB_EXTERN_MODULE)
+#if (defined CONFIG_AMLOGIC_DVB_EXTERN)
 	dvb_extern_unregister_frontend();
 #endif
 
@@ -2581,7 +2475,7 @@ static int aml_dvb_remove(struct platform_device *pdev)
 		amports_switch_gate("ahbarb0", 0);
 		amports_switch_gate("parser_top", 0);
 
-		if (!IS_ERR_OR_NULL(aml_dvb_afifo_clk)) {
+		if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1) {
 			clk_disable_unprepare(aml_dvb_afifo_clk);
 		}
 	}
@@ -2892,18 +2786,18 @@ static int aml_tsdemux_set_demux(int id)
 
 static unsigned long aml_tsdemux_hwdmx_spin_lock(unsigned long flags)
 {
-	struct aml_dvb *dvb = &aml_dvb_device;
+    struct aml_dvb *dvb = &aml_dvb_device;
 
-	spin_lock_irqsave(&dvb->slock, flags);
-	return flags;
+    spin_lock_irqsave(&dvb->slock, flags);
+    return flags;
 }
 
 static int aml_tsdemux_hwdmx_spin_unlock(unsigned long flags)
 {
-	struct aml_dvb *dvb = &aml_dvb_device;
+    struct aml_dvb *dvb = &aml_dvb_device;
 
-	spin_unlock_irqrestore(&dvb->slock, flags);
-	return 0;
+    spin_unlock_irqrestore(&dvb->slock, flags);
+    return 0;
 }
 
 module_init(aml_dvb_init);

@@ -1,7 +1,22 @@
+/*
+ * drivers/amlogic/amports/jpegenc.h
+ *
+ * Copyright (C) 2015 Amlogic, Inc. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+*/
 #ifndef __JPEG_ENC_H_
 #define __JPEG_ENC_H_
 
-#include <linux/dma-buf.h>
 #define JPEGENC_DEVINFO_M8 "AML-M8"
 #define JPEGENC_DEVINFO_G9 "AML-G9"
 #define JPEGENC_DEVINFO_GXBB "AML-GXBB"
@@ -66,15 +81,12 @@
 
 #define JPEGENC_IOC_GET_DEVINFO	_IOW(JPEGENC_IOC_MAGIC, 0xf0, u32)
 
-#define JPEGENC_IOC_GET_BUFFINFO	  	_IOW(JPEGENC_IOC_MAGIC, 0x00, u32)
-#define JPEGENC_IOC_CONFIG_INIT		  	_IOW(JPEGENC_IOC_MAGIC, 0x01, u32)
-#define JPEGENC_IOC_NEW_CMD			  	_IOW(JPEGENC_IOC_MAGIC, 0x02, u32)
-#define JPEGENC_IOC_GET_STAGE		  	_IOW(JPEGENC_IOC_MAGIC, 0x03, u32)
-#define JPEGENC_IOC_GET_OUTPUT_SIZE		_IOW(JPEGENC_IOC_MAGIC, 0x04, u32)
+#define JPEGENC_IOC_GET_BUFFINFO	_IOW(JPEGENC_IOC_MAGIC, 0x00, u32)
+#define JPEGENC_IOC_CONFIG_INIT	_IOW(JPEGENC_IOC_MAGIC, 0x01, u32)
+#define JPEGENC_IOC_NEW_CMD	_IOW(JPEGENC_IOC_MAGIC, 0x02, u32)
+#define JPEGENC_IOC_GET_STAGE	_IOW(JPEGENC_IOC_MAGIC, 0x03, u32)
+#define JPEGENC_IOC_GET_OUTPUT_SIZE	_IOW(JPEGENC_IOC_MAGIC, 0x04, u32)
 #define JPEGENC_IOC_SET_EXT_QUANT_TABLE	_IOW(JPEGENC_IOC_MAGIC, 0x05, u32)
-#define JPEGENC_IOC_QUERY_DMA_SUPPORT	_IOW(JPEGENC_IOC_MAGIC, 0x06, u32)
-#define JPEGENC_IOC_CONFIG_DMA_INPUT		_IOW(JPEGENC_IOC_MAGIC, 0x07, s32)
-#define JPEGENC_IOC_RELEASE_DMA_INPUT		_IOW(JPEGENC_IOC_MAGIC, 0x08, u32)
 
 #define DCTSIZE2	    64
 
@@ -112,7 +124,6 @@ enum jpegenc_mem_type_e {
 	JPEGENC_LOCAL_BUFF = 0,
 	JPEGENC_CANVAS_BUFF,
 	JPEGENC_PHYSICAL_BUFF,
-	JPEGENC_DMA_BUFF,
 	JPEGENC_MAX_BUFF_TYPE
 };
 
@@ -156,20 +167,9 @@ struct jpegenc_request_s {
 	u32 jpeg_quality;
 	u32 QuantTable_id;
 	u32 flush_flag;
-	u32 block_mode;
 	enum jpegenc_mem_type_e type;
 	enum jpegenc_frame_fmt_e input_fmt;
 	enum jpegenc_frame_fmt_e output_fmt;
-
-	u32 y_off;
-	u32 u_off;
-	u32 v_off;
-
-	u32 y_stride;
-	u32 u_stride;
-	u32 v_stride;
-
-	u32 h_stride;
 };
 
 struct jpegenc_meminfo_s {
@@ -180,7 +180,6 @@ struct jpegenc_meminfo_s {
 #ifdef CONFIG_CMA
 	ulong cma_pool_size;
 #endif
-
 	struct Jpegenc_Buff_s reserve_mem;
 	struct Jpegenc_BuffInfo_s *bufspec;
 };
@@ -212,7 +211,6 @@ struct jpegenc_wq_s {
 #ifdef CONFIG_CMA
 	struct page *venc_pages;
 #endif
-	struct enc_dma_cfg *dma_input;
 };
 
 struct jpegenc_manager_s {
@@ -223,8 +221,6 @@ struct jpegenc_manager_s {
 	bool process_irq;
 	bool inited;
 	bool use_reserve;
-	bool use_cma;
-
 	u8 opened;
 
 	spinlock_t sem_lock;
@@ -232,18 +228,6 @@ struct jpegenc_manager_s {
 	struct jpegenc_meminfo_s mem;
 	struct jpegenc_wq_s wq;
 	struct tasklet_struct tasklet;
-};
-
-struct enc_dma_cfg {
-	int fd;
-	size_t size;
-	void *dev;
-	void *vaddr;
-	void *paddr;
-	struct dma_buf *dbuf;
-	struct dma_buf_attachment *attach;
-	struct sg_table *sg;
-	enum dma_data_direction dir;
 };
 
 /********************************************
@@ -262,5 +246,4 @@ struct enc_dma_cfg {
 #define JPEGENC_ENCODER_DONE		4
 
 extern bool jpegenc_on(void);
-#define JPEGENC_IOC_NEW_CMD2			  	_IOW(JPEGENC_IOC_MAGIC, 0x09, struct jpegenc_request_s)
 #endif

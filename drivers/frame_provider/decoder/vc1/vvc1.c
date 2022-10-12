@@ -30,6 +30,7 @@
 #include <linux/amlogic/media/vfm/vframe.h>
 #include <linux/amlogic/media/vfm/vframe_provider.h>
 #include <linux/amlogic/media/vfm/vframe_receiver.h>
+
 #include <linux/amlogic/media/utils/vdec_reg.h>
 #include "../utils/amvdec.h"
 #include "../utils/vdec.h"
@@ -40,10 +41,10 @@
 #include <linux/amlogic/media/codec_mm/codec_mm.h>
 #include <linux/amlogic/media/codec_mm/configs.h>
 #include "../utils/firmware.h"
-//#include <linux/amlogic/tee.h>
-#include <uapi/linux/tee.h>
+#include "../utils/secprot.h"
 #include <linux/delay.h>
 #include "../../../common/chips/decoder_cpu_ver_info.h"
+
 
 #define DRIVER_NAME "amvdec_vc1"
 #define MODULE_NAME "amvdec_vc1"
@@ -145,7 +146,6 @@ static u64 next_pts_us64;
 static bool is_reset;
 static struct work_struct set_clk_work;
 static struct work_struct error_wd_work;
-static struct canvas_config_s vc1_canvas_config[DECODE_BUFFER_NUM_MAX][3];
 spinlock_t vc1_rp_lock;
 
 
@@ -550,17 +550,6 @@ static irqreturn_t vvc1_isr(int irq, void *dev_id)
 				decoder_bmmu_box_get_mem_handle(
 					mm_blk_handle,
 					buffer_index);
-			if (is_support_vdec_canvas()) {
-				vf->canvas0Addr = vf->canvas1Addr = -1;
-				vf->canvas0_config[0] = vc1_canvas_config[buffer_index][0];
-				vf->canvas0_config[1] = vc1_canvas_config[buffer_index][1];
-#ifdef NV21
-				vf->plane_num = 2;
-#else
-				vf->canvas0_config[2] = vc1_canvas_config[buffer_index][2];
-				vf->plane_num = 3;
-#endif
-			}
 			kfifo_put(&display_q, (const struct vframe_s *)vf);
 			ATRACE_COUNTER(MODULE_NAME, vf->pts);
 
@@ -625,18 +614,6 @@ static irqreturn_t vvc1_isr(int irq, void *dev_id)
 				decoder_bmmu_box_get_mem_handle(
 					mm_blk_handle,
 					buffer_index);
-
-			if (is_support_vdec_canvas()) {
-				vf->canvas0Addr = vf->canvas1Addr = -1;
-				vf->canvas0_config[0] = vc1_canvas_config[buffer_index][0];
-				vf->canvas0_config[1] = vc1_canvas_config[buffer_index][1];
-#ifdef NV21
-				vf->plane_num = 2;
-#else
-				vf->canvas0_config[2] = vc1_canvas_config[buffer_index][2];
-				vf->plane_num = 3;
-#endif
-			}
 			kfifo_put(&display_q, (const struct vframe_s *)vf);
 			ATRACE_COUNTER(MODULE_NAME, vf->pts);
 
@@ -732,17 +709,7 @@ static irqreturn_t vvc1_isr(int irq, void *dev_id)
 				decoder_bmmu_box_get_mem_handle(
 					mm_blk_handle,
 					buffer_index);
-			if (is_support_vdec_canvas()) {
-				vf->canvas0Addr = vf->canvas1Addr = -1;
-				vf->canvas0_config[0] = vc1_canvas_config[buffer_index][0];
-				vf->canvas0_config[1] = vc1_canvas_config[buffer_index][1];
-#ifdef NV21
-				vf->plane_num = 2;
-#else
-				vf->canvas0_config[2] = vc1_canvas_config[buffer_index][2];
-				vf->plane_num = 3;
-#endif
-			}
+
 			kfifo_put(&display_q, (const struct vframe_s *)vf);
 			ATRACE_COUNTER(MODULE_NAME, vf->pts);
 
@@ -926,57 +893,30 @@ static int vvc1_canvas_init(void)
 		}
 
 #ifdef NV21
-		config_cav_lut_ex(2 * i + 0,
+		canvas_config(2 * i + 0,
 			buf_start,
 			canvas_width, canvas_height,
-			CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32, 0, VDEC_1);
-		vc1_canvas_config[i][0].endian = 0;
-		vc1_canvas_config[i][0].width = canvas_width;
-		vc1_canvas_config[i][0].height = canvas_height;
-		vc1_canvas_config[i][0].block_mode = CANVAS_BLKMODE_32X32;
-		vc1_canvas_config[i][0].phy_addr = buf_start;
-
-		config_cav_lut_ex(2 * i + 1,
+			CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32);
+		canvas_config(2 * i + 1,
 			buf_start +
 			decbuf_y_size, canvas_width,
 			canvas_height / 2, CANVAS_ADDR_NOWRAP,
-			CANVAS_BLKMODE_32X32, 0, VDEC_1);
-		vc1_canvas_config[i][1].endian = 0;
-		vc1_canvas_config[i][1].width = canvas_width;
-		vc1_canvas_config[i][1].height = canvas_height >> 1;
-		vc1_canvas_config[i][1].block_mode = CANVAS_BLKMODE_32X32;
-		vc1_canvas_config[i][1].phy_addr = buf_start + decbuf_y_size;
+			CANVAS_BLKMODE_32X32);
 #else
-		config_cav_lut_ex(3 * i + 0,
+		canvas_config(3 * i + 0,
 			buf_start,
 			canvas_width, canvas_height,
-			CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32, 0, VDEC_1);
-		vc1_canvas_config[i][0].endian = 0;
-		vc1_canvas_config[i][0].width = canvas_width;
-		vc1_canvas_config[i][0].height = canvas_height;
-		vc1_canvas_config[i][0].block_mode = CANVAS_BLKMODE_32X32;
-		vc1_canvas_config[i][0].phy_addr = buf_start;
-		config_cav_lut_ex(3 * i + 1,
+			CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32);
+		canvas_config(3 * i + 1,
 			buf_start +
 			decbuf_y_size, canvas_width / 2,
 			canvas_height / 2, CANVAS_ADDR_NOWRAP,
-			CANVAS_BLKMODE_32X32, 0, VDEC_1);
-		vc1_canvas_config[i][1].endian = 0;
-		vc1_canvas_config[i][1].width = canvas_width >> 1;
-		vc1_canvas_config[i][1].height = canvas_height >> 1;
-		vc1_canvas_config[i][1].block_mode = CANVAS_BLKMODE_32X32;
-		vc1_canvas_config[i][1].phy_addr = buf_start + decbuf_y_size;
-		config_cav_lut_ex(3 * i + 2,
+			CANVAS_BLKMODE_32X32);
+		canvas_config(3 * i + 2,
 			buf_start +
 			decbuf_y_size + decbuf_uv_size,
 			canvas_width / 2, canvas_height / 2,
-			CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32, 0, VDEC_1);
-		vc1_canvas_config[i][2].endian = 0;
-		vc1_canvas_config[i][2].width = canvas_width >> 1;
-		vc1_canvas_config[i][2].height = canvas_height >> 1;
-		vc1_canvas_config[i][2].block_mode = CANVAS_BLKMODE_32X32;
-		vc1_canvas_config[i][2].phy_addr = buf_start +
-			decbuf_y_size + decbuf_uv_size;
+			CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32);
 #endif
 
 	}
@@ -1162,8 +1102,11 @@ static void error_do_work(struct work_struct *work)
 		amvdec_start();
 }
 
-static void vvc1_put_timer_func(struct timer_list *timer)
+
+static void vvc1_put_timer_func(unsigned long arg)
 {
+	struct timer_list *timer = (struct timer_list *)arg;
+
 	if (READ_VREG(VC1_SOS_COUNT) > 10)
 		schedule_work(&error_wd_work);
 
@@ -1201,7 +1144,7 @@ static s32 vvc1_init(void)
 		return -ENOMEM;
 
 	pr_info("vvc1_init, format %d\n", vvc1_amstream_dec_info.format);
-	timer_setup(&recycle_timer, vvc1_put_timer_func, 0);
+	init_timer(&recycle_timer);
 
 	stat |= STAT_TIMER_INIT;
 
@@ -1233,7 +1176,7 @@ static s32 vvc1_init(void)
 		amvdec_disable();
 		vfree(buf);
 		pr_err("VC1: the %s fw loading failed, err: %x\n",
-			tee_enabled() ? "TEE" : "local", ret);
+			vdec_tee_enabled() ? "TEE" : "local", ret);
 		return -EBUSY;
 	}
 
@@ -1275,7 +1218,10 @@ static s32 vvc1_init(void)
 
 	stat |= STAT_VF_HOOK;
 
+	recycle_timer.data = (ulong)&recycle_timer;
+	recycle_timer.function = vvc1_put_timer_func;
 	recycle_timer.expires = jiffies + PUT_INTERVAL;
+
 	add_timer(&recycle_timer);
 
 	stat |= STAT_TIMER_ARM;
@@ -1383,16 +1329,32 @@ static int amvdec_vc1_remove(struct platform_device *pdev)
 }
 
 /****************************************/
+#ifdef CONFIG_PM
+static int vc1_suspend(struct device *dev)
+{
+	amvdec_suspend(to_platform_device(dev), dev->power.power_state);
+	return 0;
+}
+
+static int vc1_resume(struct device *dev)
+{
+	amvdec_resume(to_platform_device(dev));
+	return 0;
+}
+
+static const struct dev_pm_ops vc1_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(vc1_suspend, vc1_resume)
+};
+#endif
 
 static struct platform_driver amvdec_vc1_driver = {
 	.probe = amvdec_vc1_probe,
 	.remove = amvdec_vc1_remove,
-#ifdef CONFIG_PM
-	.suspend = amvdec_suspend,
-	.resume = amvdec_resume,
-#endif
 	.driver = {
 		.name = DRIVER_NAME,
+#ifdef CONFIG_PM
+		.pm = &vc1_pm_ops,
+#endif
 	}
 };
 

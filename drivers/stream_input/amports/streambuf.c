@@ -194,7 +194,7 @@ void stbuf_fetch_release(void)
 	}
 }
 
-static void _stbuf_timer_func(struct timer_list *arg)
+static void _stbuf_timer_func(unsigned long arg)
 {
 	struct stream_buf_s *p = (struct stream_buf_s *)arg;
 
@@ -412,7 +412,7 @@ s32 stbuf_wait_space(struct stream_buf_s *stream_buf, size_t count)
 
 	p->wcnt = count;
 
-	timer_setup(&p->timer, _stbuf_timer_func, (ulong) p);
+	setup_timer(&p->timer, _stbuf_timer_func, (ulong) p);
 
 	mod_timer(&p->timer, jiffies + STBUF_WAIT_INTERVAL);
 

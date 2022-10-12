@@ -43,7 +43,7 @@
 #include "../utils/decoder_bmmu_box.h"
 #include "../utils/firmware.h"
 #include "../../../common/chips/decoder_cpu_ver_info.h"
-#include <linux/amlogic/tee.h>
+#include "../utils/secprot.h"
 
 #define DEBUG_MULTI_FLAG  0
 /*
@@ -123,6 +123,9 @@
 
 #define DECODE_CFG            AV_SCRATCH_K
 
+
+
+
 #define VF_POOL_SIZE        64
 #define PUT_INTERVAL        (HZ/100)
 
@@ -150,7 +153,7 @@ static unsigned int buf_spec_reg[] = {
 #define DEBUG_REG2	AV_SCRATCH_D
 
 
-static void check_timer_func(struct timer_list *timer);
+static void check_timer_func(unsigned long arg);
 static void vavs_work(struct work_struct *work);
 
 #define DEC_CONTROL_FLAG_FORCE_2500_1080P_INTERLACE 0x0001
@@ -984,6 +987,13 @@ static struct vframe_s *vavs_vf_peek(void *op_arg)
 	if (hw->recover_flag)
 		return NULL;
 
+	if (kfifo_len(&hw->display_q) > VF_POOL_SIZE) {
+		debug_print(hw, PRINT_FLAG_RUN_FLOW,
+			"kfifo len:%d invaild, peek error\n",
+			kfifo_len(&hw->display_q));
+		return NULL;
+	}
+
 	if (kfifo_peek(&hw->display_q, &vf)) {
 		if (vf) {
 			if (force_fps & 0x100) {
@@ -1262,35 +1272,35 @@ static int vavs_canvas_init(struct vdec_avs_hw_s *hw)
 
 		} else {
 #ifdef NV21
-			config_cav_lut_ex(canvas_base + canvas_num * i + 0,
+			canvas_config(canvas_base + canvas_num * i + 0,
 					buf_start,
 					canvas_width, canvas_height,
 					CANVAS_ADDR_NOWRAP,
-					CANVAS_BLKMODE_32X32, 0, VDEC_1);
-			config_cav_lut_ex(canvas_base + canvas_num * i + 1,
+					CANVAS_BLKMODE_32X32);
+			canvas_config(canvas_base + canvas_num * i + 1,
 					buf_start +
 					decbuf_y_size, canvas_width,
 					canvas_height / 2,
 					CANVAS_ADDR_NOWRAP,
-					CANVAS_BLKMODE_32X32, 0, VDEC_1);
+					CANVAS_BLKMODE_32X32);
 #else
-			config_cav_lut_ex(canvas_num * i + 0,
+			canvas_config(canvas_num * i + 0,
 					buf_start,
 					canvas_width, canvas_height,
 					CANVAS_ADDR_NOWRAP,
-					CANVAS_BLKMODE_32X32, 0, VDEC_1);
-			config_cav_lut_ex(canvas_num * i + 1,
+					CANVAS_BLKMODE_32X32);
+			canvas_config(canvas_num * i + 1,
 					buf_start +
 					decbuf_y_size, canvas_width / 2,
 					canvas_height / 2,
 					CANVAS_ADDR_NOWRAP,
-					CANVAS_BLKMODE_32X32, 0, VDEC_1);
-			config_cav_lut_ex(canvas_num * i + 2,
+					CANVAS_BLKMODE_32X32);
+			canvas_config(canvas_num * i + 2,
 					buf_start +
 					decbuf_y_size + decbuf_uv_size,
 					canvas_width / 2, canvas_height / 2,
 					CANVAS_ADDR_NOWRAP,
-					CANVAS_BLKMODE_32X32, 0, VDEC_1);
+					CANVAS_BLKMODE_32X32);
 #endif
 			debug_print(hw, PRINT_FLAG_VFRAME_DETAIL,
 				"canvas config %d, addr %p\n", i,
@@ -1592,21 +1602,21 @@ static int vavs_prot_init(struct vdec_avs_hw_s *hw)
 			vavs_restore_regs(hw);
 
 		for (i = 0; i < hw->vf_buf_num_used; i++) {
-			config_cav_lut_ex(canvas_y(hw->canvas_spec[i]),
+			canvas_config_ex(canvas_y(hw->canvas_spec[i]),
 				hw->canvas_config[i][0].phy_addr,
 				hw->canvas_config[i][0].width,
 				hw->canvas_config[i][0].height,
 				CANVAS_ADDR_NOWRAP,
 				hw->canvas_config[i][0].block_mode,
-				0, VDEC_1);
+				0);
 
-			config_cav_lut_ex(canvas_u(hw->canvas_spec[i]),
+			canvas_config_ex(canvas_u(hw->canvas_spec[i]),
 				hw->canvas_config[i][1].phy_addr,
 				hw->canvas_config[i][1].width,
 				hw->canvas_config[i][1].height,
 				CANVAS_ADDR_NOWRAP,
 				hw->canvas_config[i][1].block_mode,
-				0, VDEC_1);
+				0);
 		}
 	} else {
 		r = vavs_canvas_init(hw);
@@ -1930,10 +1940,9 @@ static void avs_set_clk(struct work_struct *work)
 #ifdef DEBUG_MULTI_WITH_AUTOMODE
 int delay_count = 0;
 #endif
-static void vavs_put_timer_func(struct timer_list *arg)
+static void vavs_put_timer_func(unsigned long arg)
 {
-	struct vdec_avs_hw_s *hw = container_of(arg,
-		struct vdec_avs_hw_s, recycle_timer);
+	struct vdec_avs_hw_s *hw = (struct vdec_avs_hw_s *)arg;
 	struct timer_list *timer = &hw->recycle_timer;
 
 #ifndef HANDLE_AVS_IRQ
@@ -2208,10 +2217,9 @@ static s32 vavs_init(struct vdec_avs_hw_s *hw)
 	hw->fw = fw;
 
 	if (hw->m_ins_flag) {
-		timer_setup(&hw->check_timer, check_timer_func, 0);
-		//init_timer(&hw->check_timer);
-		//hw->check_timer.data = (ulong) hw;
-		//hw->check_timer.function = check_timer_func;
+		init_timer(&hw->check_timer);
+		hw->check_timer.data = (ulong) hw;
+		hw->check_timer.function = check_timer_func;
 		hw->check_timer.expires = jiffies + CHECK_INTERVAL;
 
 
@@ -2235,7 +2243,7 @@ static s32 vavs_init(struct vdec_avs_hw_s *hw)
 		amvdec_disable();
 		/*vfree(buf);*/
 		pr_err("AVS: the %s fw loading failed, err: %x\n",
-			tee_enabled() ? "TEE" : "local", ret);
+			vdec_tee_enabled() ? "TEE" : "local", ret);
 		return -EBUSY;
 	}
 
@@ -2281,9 +2289,8 @@ static s32 vavs_init(struct vdec_avs_hw_s *hw)
 
 	hw->stat |= STAT_VF_HOOK;
 
-	timer_setup(&hw->recycle_timer, vavs_put_timer_func, 0);
-	//hw->recycle_timer.data = (ulong)(hw);
-	//hw->recycle_timer.function = vavs_put_timer_func;
+	hw->recycle_timer.data = (ulong)(hw);
+	hw->recycle_timer.function = vavs_put_timer_func;
 	hw->recycle_timer.expires = jiffies + PUT_INTERVAL;
 
 	add_timer(&hw->recycle_timer);
@@ -2505,7 +2512,7 @@ static int amvdec_avs_remove(struct platform_device *pdev)
 }
 
 /****************************************/
-#if 0
+#ifdef DEBUG_WITH_SINGLE_MODE
 static struct platform_driver amvdec_avs_driver = {
 	.probe = amvdec_avs_probe,
 	.remove = amvdec_avs_remove,
@@ -2514,7 +2521,6 @@ static struct platform_driver amvdec_avs_driver = {
 	}
 };
 #endif
-
 static void recycle_frames(struct vdec_avs_hw_s *hw);
 
 static unsigned long run_ready(struct vdec_s *vdec, unsigned long mask)
@@ -2523,6 +2529,7 @@ static unsigned long run_ready(struct vdec_s *vdec, unsigned long mask)
 	(struct vdec_avs_hw_s *)vdec->private;
 	int ret = 1;
 	unsigned buf_busy_mask = (1 << hw->vf_buf_num_used) - 1;
+
 #ifdef DEBUG_MULTI_FRAME_INS
 	if ((DECODE_ID(hw) == 0) && run_count[0] > run_count[1] &&
 		run_count[1] < max_run_count[1])
@@ -2844,10 +2851,9 @@ static void recycle_frames(struct vdec_avs_hw_s *hw)
 }
 
 
-static void check_timer_func(struct timer_list *timer)
+static void check_timer_func(unsigned long arg)
 {
-	struct vdec_avs_hw_s *hw = container_of(timer,
-		struct vdec_avs_hw_s, check_timer);
+	struct vdec_avs_hw_s *hw = (struct vdec_avs_hw_s *)arg;
 	struct vdec_s *vdec = hw_to_vdec(hw);
 	unsigned int timeout_val = decode_timeout_val;
 	unsigned long flags;
@@ -3144,7 +3150,7 @@ void (*callback)(struct vdec_s *, void *),
 			hw->fw->data, hw->fw->len);
 		if (ret < 0) {
 			pr_err("[%d] %s: the %s fw loading failed, err: %x\n", vdec->id,
-				hw->fw->name, tee_enabled() ? "TEE" : "local", ret);
+				hw->fw->name, vdec_tee_enabled() ? "TEE" : "local", ret);
 			hw->dec_result = DEC_RESULT_FORCE_EXIT;
 			vdec_schedule_work(&hw->work);
 			return;
@@ -3187,8 +3193,8 @@ void (*callback)(struct vdec_s *, void *),
 		"%s READ_VREG(AVS_BUFFERIN)=0x%x, recycle_q num %d\n",
 		__func__, READ_VREG(AVS_BUFFERIN),
 		kfifo_len(&hw->recycle_q));
-
 	WRITE_VREG(VIFF_BIT_CNT, size * 8);
+
 	if (hw->reset_decode_flag)
 		WRITE_VREG(DECODE_STATUS, 0);
 	else {
@@ -3831,6 +3837,7 @@ static irqreturn_t vmavs_isr_thread_fn(struct vdec_s *vdec, int irq)
 #endif
 }
 
+
 static irqreturn_t vmavs_isr(struct vdec_s *vdec, int irq)
 {
 
@@ -4370,21 +4377,21 @@ if (run_flag) {
 			vavs_restore_regs(hw);
 
 		for (i = 0; i < hw->vf_buf_num_used; i++) {
-			config_cav_lut_ex(canvas_y(hw->canvas_spec[i]),
+			canvas_config_ex(canvas_y(hw->canvas_spec[i]),
 				hw->canvas_config[i][0].phy_addr,
 				hw->canvas_config[i][0].width,
 				hw->canvas_config[i][0].height,
 				CANVAS_ADDR_NOWRAP,
 				hw->canvas_config[i][0].block_mode,
-				0, VDEC_1);
+				0);
 
-			config_cav_lut_ex(canvas_u(hw->canvas_spec[i]),
+			canvas_config_ex(canvas_u(hw->canvas_spec[i]),
 				hw->canvas_config[i][1].phy_addr,
 				hw->canvas_config[i][1].width,
 				hw->canvas_config[i][1].height,
 				CANVAS_ADDR_NOWRAP,
 				hw->canvas_config[i][1].block_mode,
-				0, VDEC_1);
+				0);
 		}
 	}
 }
@@ -4504,7 +4511,7 @@ static void init_hw(struct vdec_s *vdec)
 		amvdec_disable();
 		/*vfree(buf);*/
 		pr_err("AVS: the %s fw loading failed, err: %x\n",
-			tee_enabled() ? "TEE" : "local", ret);
+			vdec_tee_enabled() ? "TEE" : "local", ret);
 	}
 	pr_info("%s, %d\n", __func__, __LINE__);
 
@@ -4859,8 +4866,6 @@ static int __init ammvdec_avs_driver_init_module(void)
 		pr_info("failed to register amvdec_avs driver\n");
 		return -ENODEV;
 	}
-#else
-	//amvdec_avs_driver = amvdec_avs_driver;
 #endif
 	if (get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_GXBB)
 		ammvdec_avs_profile.profile = "mavs+";
@@ -4979,6 +4984,7 @@ MODULE_PARM_DESC(udebug_pause_decode_idx, "\n udebug_pause_decode_idx\n");
 
 module_param(udebug_pause_ins_id, uint, 0664);
 MODULE_PARM_DESC(udebug_pause_ins_id, "\n udebug_pause_ins_id\n");
+
 
 module_param(start_decoding_delay, uint, 0664);
 MODULE_PARM_DESC(start_decoding_delay, "\n start_decoding_delay\n");

@@ -18,13 +18,12 @@ CONFIGS := CONFIG_AMLOGIC_MEDIA_VDEC_MPEG12=m \
 	CONFIG_AMLOGIC_MEDIA_VDEC_MJPEG_MULTI=m \
 	CONFIG_AMLOGIC_MEDIA_VDEC_REAL=m \
 	CONFIG_AMLOGIC_MEDIA_VDEC_AVS=m \
+	CONFIG_AMLOGIC_MEDIA_VDEC_AVS_MULTI=m \
 	CONFIG_AMLOGIC_MEDIA_VDEC_AVS2=m \
+	CONFIG_AMLOGIC_MEDIA_VDEC_AV1=m \
 	CONFIG_AMLOGIC_MEDIA_VENC_H264=m \
-	CONFIG_AMLOGIC_MEDIA_VENC_H265=m \
-	CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION=y \
-	CONFIG_AMLOGIC_MEDIA_GE2D=y \
-	CONFIG_AMLOGIC_MEDIA_VENC_MULTI=m \
-	CONFIG_AMLOGIC_MEDIA_VENC_JPEG=m
+	CONFIG_AMLOGIC_MEDIA_VENC_JPEG=m \
+	CONFIG_AMLOGIC_MEDIA_VENC_H265=m
 
 define copy-media-modules
 $(foreach m, $(shell find $(strip $(1)) -name "*.ko"),\
@@ -63,10 +62,11 @@ $(shell cp $(MEDIA_DRIVERS)/../firmware/* $(UCODE_OUT) -rfa)
 $(shell cp $(MEDIA_DRIVERS)/* $(MEDIA_MODULES) -rfa)
 
 define media-modules
-	PATH=$(KERNEL_TOOLPATHS):$$PATH \
-	$(MAKE) -C $(KDIR) M=$(MEDIA_MODULES) $(KERNEL_ARGS) $(CONFIGS) \
-	"EXTRA_CFLAGS+=-I$(INCLUDE) -Wno-error" modules; \
-	find $(MEDIA_MODULES) -name "*.ko" | PATH=$$(cd ./$(TARGET_HOST_TOOL_PATH); pwd):$$PATH xargs -i cp {} $(MODS_OUT)
+	PATH=$$(cd ./$(TARGET_HOST_TOOL_PATH); pwd):$$PATH \
+		$(MAKE) -C $(KDIR) M=$(MEDIA_MODULES) ARCH=$(KERNEL_ARCH) \
+		CROSS_COMPILE=$(PREFIX_CROSS_COMPILE) $(CONFIGS) \
+		EXTRA_CFLAGS+=-I$(INCLUDE) modules;
+		sh $(TOP)/device/amlogic/common/copy_modules.sh $(MEDIA_MODULES) $(MODS_OUT)
 endef
 
 else
@@ -90,10 +90,18 @@ ifeq (,$(wildcard $(MODS_OUT)))
 $(shell mkdir $(MODS_OUT) -p)
 endif
 
+ifeq ($(KERNEL_A32_SUPPORT), true)
+TOOLS := /opt/gcc-linaro-6.3.1-2017.02-x86_64_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-
+else
+TOOLS := /opt/gcc-linaro-5.3-2016.02-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-
+endif
+
+
 modules:
-	CCACHE_NODIRECT="true" PATH=$(KERNEL_TOOLPATHS):$$PATH \
-	$(MAKE) -C $(KDIR) M=$(MEDIA_DRIVERS) ARCH=$(KERNEL_ARCH) $(KERNEL_ARGS) $(CONFIGS) \
-	EXTRA_CFLAGS+=-I$(INCLUDE) -j64
+	CCACHE_NODIRECT="true" PATH=$$(cd ./$(TARGET_HOST_TOOL_PATH); pwd):$$PATH \
+		$(MAKE) -C $(KDIR) M=$(MEDIA_DRIVERS) ARCH=$(KERNEL_ARCH) \
+		CROSS_COMPILE=$(TOOLS) $(CONFIGS) \
+		EXTRA_CFLAGS+=-I$(INCLUDE) -j64
 
 copy-modules:
 	@echo "start copying media modules."
@@ -102,9 +110,8 @@ copy-modules:
 
 all: modules copy-modules
 
-
 clean:
-	PATH=$(KERNEL_TOOLPATHS):$$PATH \
-	$(MAKE) -C $(KDIR) M=$(MEDIA_DRIVERS) $(KERNEL_ARGS) clean
+	PATH=$$(cd ./$(TARGET_HOST_TOOL_PATH); pwd):$$PATH \
+		$(MAKE) -C $(KDIR) M=$(MEDIA_DRIVERS) ARCH=$(KERNEL_ARCH) clean
 
 endif

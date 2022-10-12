@@ -52,8 +52,6 @@ void hevc_back_clock_hi_enable(void);
 int vdec_source_get(enum vdec_type_e core);
 int vdec_clk_get(enum vdec_type_e core);
 
-bool is_hevc_front_back_clk_combined(void);
-
 int vdec_source_changed_for_clk_set(int format, int width, int height, int fps);
 int get_clk_with_source(int format, int w_x_h_fps);
 
@@ -132,7 +130,7 @@ static int __init vdec_init_clk(void)
 #endif
 #ifdef VDEC_HAS_HEVC
 	register_vdec_clk_mgr(cpus, VDEC_HEVC, &vdec_hevc_clk_mgr);
-	if (get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_G12A)
+	if (get_cpu_major_id() >= MESON_CPU_MAJOR_ID_G12A)
 		register_vdec_clk_mgr(cpus, VDEC_HEVCB, &vdec_hevc_back_clk_mgr);
 #endif
 #ifdef VDEC_HAS_VDEC_HCODEC

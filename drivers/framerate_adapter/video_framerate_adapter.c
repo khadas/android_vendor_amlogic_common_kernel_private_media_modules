@@ -1,15 +1,29 @@
+/*
+ * drivers/framerate_adapter/video_framerate_adapter.c
+ *
+ * Copyright (C) 2020 Amlogic, Inc. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ */
 #include <linux/slab.h>
 #include <linux/device.h>
 #include <linux/kernel.h>
-#include <linux/fs.h>
-#include <uapi/linux/major.h>
 #include "video_framerate_adapter.h"
 
 #define CLASS_NAME	"framerate_adapter"
 #define DEV_NAME	"framerate_dev"
 
 #ifndef VIDEOFRAME_MAJOR
-#define VIDEOFRAME_MAJOR AMSTREAM_MAJOR
+#define VIDEOFRAME_MAJOR 550
 #endif
 
 struct frame_rate_dev_s* frame_rate_dev;
@@ -35,15 +49,13 @@ static const struct file_operations frame_rate_fops = {
 	.owner = THIS_MODULE
 };
 
-static struct attribute *frame_rate_class_attrs[] = {
-	NULL
+static struct class_attribute frame_rate_class_attrs[] = {
+	__ATTR_NULL
 };
-
-ATTRIBUTE_GROUPS(frame_rate_class);
 
 static struct class frame_rate_class = {
 	.name = CLASS_NAME,
-	.class_groups = frame_rate_class_groups,
+	.class_attrs = frame_rate_class_attrs,
 };
 
 static int frame_rate_driver_init(void)
@@ -54,7 +66,7 @@ static int frame_rate_driver_init(void)
 	if (IS_ERR_OR_NULL(frame_rate_dev))
 		return -ENOMEM;
 
-	frame_rate_dev->dev_no = MKDEV(VIDEOFRAME_MAJOR, 101);
+	frame_rate_dev->dev_no = MKDEV(VIDEOFRAME_MAJOR, 100);
 
 	ret = register_chrdev_region(frame_rate_dev->dev_no, 1, DEV_NAME);
 	if (ret < 0) {

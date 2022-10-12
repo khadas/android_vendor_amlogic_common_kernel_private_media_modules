@@ -31,8 +31,11 @@
 #include <linux/workqueue.h>
 #include <linux/dma-mapping.h>
 #include <linux/atomic.h>
+
+
 #include <linux/module.h>
 #include <linux/slab.h>
+
 #include <linux/amlogic/media/utils/vdec_reg.h>
 #include "../../../stream_input/amports/amports_priv.h"
 #include "../utils/vdec.h"
@@ -42,8 +45,8 @@
 #include <linux/amlogic/media/codec_mm/codec_mm.h>
 #include <linux/amlogic/media/codec_mm/configs.h>
 #include "../utils/firmware.h"
+#include "../utils/secprot.h"
 #include "../utils/config_parser.h"
-#include "../../../common/chips/decoder_cpu_ver_info.h"
 
 #define TIME_TASK_PRINT_ENABLE  0x100
 #define PUT_PRINT_ENABLE    0x200
@@ -79,7 +82,7 @@ static int vh264mvc_event_cb(int type, void *data, void *private_data);
 
 static void vh264mvc_prot_init(void);
 static int vh264mvc_local_init(void);
-static void vh264mvc_put_timer_func(struct timer_list *timer);
+static void vh264mvc_put_timer_func(unsigned long arg);
 
 static const char vh264mvc_dec_id[] = "vh264mvc-dev";
 
@@ -512,10 +515,10 @@ static struct vframe_s *vh264mvc_vf_peek(void *op_arg)
 
 static struct vframe_s *vh264mvc_vf_get(void *op_arg)
 {
+
 	struct vframe_s *vf;
 	int view0_buf_id;
 	int view1_buf_id;
-	struct buffer_spec_s *buf_spec_0, *buf_spec_1;
 
 	if (get_ptr == fill_ptr)
 		return NULL;
@@ -527,27 +530,10 @@ static struct vframe_s *vh264mvc_vf_get(void *op_arg)
 	if ((view0_buf_id >= 0) && (view1_buf_id >= 0)) {
 		if (view_mode == 0 || view_mode == 1) {
 			vf->type = VIDTYPE_PROGRESSIVE | VIDTYPE_VIU_FIELD;
-
-			buf_spec_0 = (view_mode == 0) ? (&buffer_spec0[view0_buf_id]) :
-					(&buffer_spec1[view1_buf_id]);
-			vf->canvas0Addr = vf->canvas1Addr = spec2canvas(buf_spec_0);
-
-			if (is_support_vdec_canvas()) {
-				vf->canvas0Addr = vf->canvas1Addr = -1;
-				vf->canvas0_config[0].block_mode = CANVAS_BLKMODE_32X32;
-				vf->canvas0_config[0].phy_addr = buf_spec_0->y_addr;
-				vf->canvas0_config[0].width = vdec_cav_get_width(buf_spec_0->y_canvas_index);
-				vf->canvas0_config[0].height = vdec_cav_get_height(buf_spec_0->y_canvas_index);
-				vf->canvas0_config[1].block_mode = CANVAS_BLKMODE_32X32;
-				vf->canvas0_config[1].phy_addr = buf_spec_0->u_addr;
-				vf->canvas0_config[1].width = vdec_cav_get_width(buf_spec_0->u_canvas_index);
-				vf->canvas0_config[1].height = vdec_cav_get_height(buf_spec_0->u_canvas_index);
-				vf->canvas0_config[2].block_mode = CANVAS_BLKMODE_32X32;
-				vf->canvas0_config[2].phy_addr = buf_spec_0->v_addr;
-				vf->canvas0_config[2].width = vdec_cav_get_width(buf_spec_0->v_canvas_index);
-				vf->canvas0_config[2].height = vdec_cav_get_height(buf_spec_0->v_canvas_index);
-				vf->plane_num = 3;
-			}
+			vf->canvas0Addr = vf->canvas1Addr =
+				(view_mode ==
+				 0) ? spec2canvas(&buffer_spec0[view0_buf_id]) :
+				spec2canvas(&buffer_spec1[view1_buf_id]);
 		} else {
 			vf->type = VIDTYPE_PROGRESSIVE | VIDTYPE_MVC;
 
@@ -559,50 +545,25 @@ static struct vframe_s *vh264mvc_vf_get(void *op_arg)
 			vf->right_eye.start_y = 0;
 			vf->right_eye.width = vf->width;
 			vf->right_eye.height = vf->height;
-			//vf->trans_fmt = TVIN_TFMT_3D_TB;
+			vf->trans_fmt = TVIN_TFMT_3D_TB;
 
 			if (view_mode == 2) {
-				buf_spec_0 = &buffer_spec1[view1_buf_id];
-				buf_spec_1 = &buffer_spec0[view0_buf_id];
+				vf->canvas0Addr =
+					spec2canvas(&buffer_spec1[
+							view1_buf_id]);
+				vf->canvas1Addr =
+					spec2canvas(&buffer_spec0[
+							view0_buf_id]);
 			} else {
-				buf_spec_0 = &buffer_spec0[view0_buf_id];
-				buf_spec_1 = &buffer_spec1[view1_buf_id];
-			}
-			if (is_support_vdec_canvas()) {
-				vf->canvas0Addr = vf->canvas1Addr = -1;
-				vf->canvas0_config[0].block_mode = CANVAS_BLKMODE_32X32;
-				vf->canvas0_config[0].phy_addr = buf_spec_0->y_addr;
-				vf->canvas0_config[0].width = vdec_cav_get_width(buf_spec_0->y_canvas_index);
-				vf->canvas0_config[0].height = vdec_cav_get_height(buf_spec_0->y_canvas_index);
-				vf->canvas0_config[1].block_mode = CANVAS_BLKMODE_32X32;
-				vf->canvas0_config[1].phy_addr = buf_spec_0->u_addr;
-				vf->canvas0_config[1].width = vdec_cav_get_width(buf_spec_0->u_canvas_index);
-				vf->canvas0_config[1].height = vdec_cav_get_height(buf_spec_0->u_canvas_index);
-				vf->canvas0_config[2].block_mode = CANVAS_BLKMODE_32X32;
-				vf->canvas0_config[2].phy_addr = buf_spec_0->v_addr;
-				vf->canvas0_config[2].width = vdec_cav_get_width(buf_spec_0->v_canvas_index);
-				vf->canvas0_config[2].height = vdec_cav_get_height(buf_spec_0->v_canvas_index);
-
-				vf->canvas1_config[0].block_mode = CANVAS_BLKMODE_32X32;
-				vf->canvas1_config[0].phy_addr = buf_spec_1->y_addr;
-				vf->canvas1_config[0].width = vdec_cav_get_width(buf_spec_1->y_canvas_index);
-				vf->canvas1_config[0].height = vdec_cav_get_height(buf_spec_1->y_canvas_index);
-				vf->canvas1_config[1].block_mode = CANVAS_BLKMODE_32X32;
-				vf->canvas1_config[1].phy_addr = buf_spec_1->u_addr;
-				vf->canvas1_config[1].width = vdec_cav_get_width(buf_spec_1->u_canvas_index);
-				vf->canvas1_config[1].height = vdec_cav_get_height(buf_spec_1->u_canvas_index);
-				vf->canvas1_config[2].block_mode = CANVAS_BLKMODE_32X32;
-				vf->canvas1_config[2].phy_addr = buf_spec_1->v_addr;
-				vf->canvas1_config[2].width = vdec_cav_get_width(buf_spec_1->v_canvas_index);
-				vf->canvas1_config[2].height = vdec_cav_get_height(buf_spec_1->v_canvas_index);
-				vf->plane_num = 3;
-			} else {
-				vf->canvas0Addr = spec2canvas(buf_spec_0);
-				vf->canvas1Addr = spec2canvas(buf_spec_1);
+				vf->canvas0Addr =
+					spec2canvas(&buffer_spec0[
+							view0_buf_id]);
+				vf->canvas1Addr =
+					spec2canvas(&buffer_spec1[
+							view1_buf_id]);
 			}
 		}
 	}
-
 	vf->type_original = vf->type;
 	if (((vfpool_idx[get_ptr].view0_drop != 0)
 		 || (vfpool_idx[get_ptr].view1_drop != 0))
@@ -743,23 +704,23 @@ static long init_canvas(int view_index, int refbuf_size, long dpb_size,
 		buffer_spec[i].alloc_count = page_count;
 		buffer_spec[i].y_addr = addr;
 		buffer_spec[i].y_canvas_index = index;
-		config_cav_lut_ex(index, addr,
+		canvas_config(index, addr,
 			mb_width << 4, mb_height << 4,
-			CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32, 0, VDEC_1);
+			CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32);
 
 		addr += mb_total << 8;
 		index++;
 		buffer_spec[i].u_addr = addr;
 		buffer_spec[i].u_canvas_index = index;
-		config_cav_lut_ex(index, addr, mb_width << 3, mb_height << 3,
-				CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32, 0, VDEC_1);
+		canvas_config(index, addr, mb_width << 3, mb_height << 3,
+				CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32);
 
 		addr += mb_total << 6;
 		index++;
 		buffer_spec[i].v_addr = addr;
 		buffer_spec[i].v_canvas_index = index;
-		config_cav_lut_ex(index, addr, mb_width << 3, mb_height << 3,
-				CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32, 0, VDEC_1);
+		canvas_config(index, addr, mb_width << 3, mb_height << 3,
+				CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32);
 
 		index++;
 	}
@@ -897,10 +858,7 @@ static void do_alloc_work(struct work_struct *work)
 		refbuf_size
 			= ref_size * (max_reference_frame_num + 1) * 2;
 
-		if (is_support_vdec_canvas())
-			index = 0;
-		else
-			index = CANVAS_INDEX_START;
+		index = CANVAS_INDEX_START;
 		ANC_CANVAS_ADDR = ANC0_CANVAS_ADDR;
 
 		ret =
@@ -979,10 +937,7 @@ static void do_alloc_work(struct work_struct *work)
 				   max_reference_frame_num);
 		}
 
-		if (is_support_vdec_canvas())
-			index = total_dec_frame_buffering[0] * 3;
-		else
-			index = CANVAS_INDEX_START + total_dec_frame_buffering[0] * 3;
+		index = CANVAS_INDEX_START + total_dec_frame_buffering[0] * 3;
 		ANC_CANVAS_ADDR =
 			ANC0_CANVAS_ADDR + total_dec_frame_buffering[0];
 
@@ -1233,8 +1188,10 @@ static void vh264_mvc_set_clk(struct work_struct *work)
 	}
 }
 
-static void vh264mvc_put_timer_func(struct timer_list *timer)
+static void vh264mvc_put_timer_func(unsigned long arg)
 {
+	struct timer_list *timer = (struct timer_list *)arg;
+
 	int valid_frame = 0;
 
 	mvc_set_rp();
@@ -1423,10 +1380,7 @@ static void H264_DECODE_INIT(void)
 #endif
 	WRITE_VREG(M4_CONTROL_REG, (1 << 13));	/* H264_DECODE_INFO - h264_en */
 
-	if (is_support_vdec_canvas())
-		WRITE_VREG(CANVAS_START, 0);
-	else
-		WRITE_VREG(CANVAS_START, CANVAS_INDEX_START);
+	WRITE_VREG(CANVAS_START, CANVAS_INDEX_START);
 #if 1
 	/* Start Address of Workspace (UCODE, temp_data...) */
 	WRITE_VREG(WORKSPACE_START,
@@ -1481,9 +1435,7 @@ static void vh264mvc_prot_init(void)
 	WRITE_VREG(BUFFER_RECYCLE, 0);
 	WRITE_VREG(DROP_CONTROL, 0);
 	CLEAR_VREG_MASK(MDEC_PIC_DC_CTRL, 1 << 17);
-
 	CLEAR_VREG_MASK(MDEC_PIC_DC_CTRL, 1 << 16);
-
 #if 1				/* /MESON_CPU_TYPE >= MESON_CPU_TYPE_MESON8 */
 	WRITE_VREG(MDEC_PIC_DC_THRESH, 0x404038aa);
 #endif
@@ -1529,6 +1481,7 @@ static int vh264mvc_local_init(void)
 	max_dec_frame_buffering[1] = -1;
 	fill_ptr = get_ptr = put_ptr = putting_ptr = 0;
 	dirty_frame_num = 0;
+
 	for (i = 0; i < DECODE_BUFFER_NUM_MAX; i++) {
 		view0_vfbuf_use[i] = 0;
 		view1_vfbuf_use[i] = 0;
@@ -1572,12 +1525,11 @@ static s32 vh264mvc_init(void)
 {
 	int ret = -1;
 	char *buf = vmalloc(0x1000 * 16);
-
 	if (buf == NULL)
 		return -ENOMEM;
 
 	pr_info("\nvh264mvc_init\n");
-	timer_setup(&recycle_timer, vh264mvc_put_timer_func, 0);
+	init_timer(&recycle_timer);
 
 	stat |= STAT_TIMER_INIT;
 
@@ -1595,13 +1547,13 @@ static s32 vh264mvc_init(void)
 
 	amvdec_enable();
 
-	if (tee_enabled()) {
+	if (vdec_tee_enabled()) {
 		ret = amvdec_loadmc_ex(VFORMAT_H264MVC, NULL, buf);
 		if (ret != 0) {
 			amvdec_disable();
 			vfree(buf);
 			pr_err("H264_MVC: the %s fw loading failed, err: %x\n",
-				tee_enabled() ? "TEE" : "local", ret);
+				vdec_tee_enabled() ? "TEE" : "local", ret);
 			return -1;
 		}
 	} else {
@@ -1667,7 +1619,10 @@ static s32 vh264mvc_init(void)
 
 	stat |= STAT_VF_HOOK;
 
+	recycle_timer.data = (ulong) (&recycle_timer);
+	recycle_timer.function = vh264mvc_put_timer_func;
 	recycle_timer.expires = jiffies + PUT_INTERVAL;
+
 	add_timer(&recycle_timer);
 
 	stat |= STAT_TIMER_ARM;
@@ -1834,16 +1789,32 @@ static int amvdec_h264mvc_remove(struct platform_device *pdev)
 }
 
 /****************************************/
+#ifdef CONFIG_PM
+static int h264mvc_suspend(struct device *dev)
+{
+	amvdec_suspend(to_platform_device(dev), dev->power.power_state);
+	return 0;
+}
+
+static int h264mvc_resume(struct device *dev)
+{
+	amvdec_resume(to_platform_device(dev));
+	return 0;
+}
+
+static const struct dev_pm_ops h264mvc_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(h264mvc_suspend, h264mvc_resume)
+};
+#endif
 
 static struct platform_driver amvdec_h264mvc_driver = {
 	.probe = amvdec_h264mvc_probe,
 	.remove = amvdec_h264mvc_remove,
-#ifdef CONFIG_PM
-	.suspend = amvdec_suspend,
-	.resume = amvdec_resume,
-#endif
 	.driver = {
 		.name = DRIVER_NAME,
+#ifdef CONFIG_PM
+		.pm = &h264mvc_pm_ops,
+#endif
 	}
 };
 

@@ -43,11 +43,9 @@ MODULE_PARM_DESC(pcmcia_debug, "enable verbose debug messages");
 static int pcmcia_plugin(struct aml_pcmcia *pc)
 {
 	if (pc->slot_state == MODULE_XTRACTED) {
-		pc->pwr(pc, AML_PWR_OPEN);/*hi is open power*/
 		pr_dbg(" CAM Plugged IN: Adapter(%d) Slot(0)\n", 0);
 		udelay(50);
-		if (pc->io_device_type != AML_DVB_IO_TYPE_CIBUS)
-			aml_pcmcia_reset(pc);
+		aml_pcmcia_reset(pc);
 		/*wait unplug*/
 		pc->init_irq(pc, IRQF_TRIGGER_RISING);
 		udelay(500);
@@ -56,7 +54,7 @@ static int pcmcia_plugin(struct aml_pcmcia *pc)
 		pr_error("repeat into pcmcia insert \r\n");
 		aml_pcmcia_reset(pc);
 	}
-	msleep(1);
+	udelay(100);
 	pc->pcmcia_plugin(pc, 1);
 
 	return 0;
@@ -65,7 +63,6 @@ static int pcmcia_plugin(struct aml_pcmcia *pc)
 static int pcmcia_unplug(struct aml_pcmcia *pc)
 {
 	if (pc->slot_state == MODULE_INSERTED) {
-		pc->pwr(pc, AML_PWR_CLOSE);/*hi is open power*/
 		pr_dbg(" CAM Unplugged: Adapter(%d) Slot(0)\n", 0);
 		/*udelay(50);*/
 		/*aml_pcmcia_reset(pc);*/
@@ -74,7 +71,7 @@ static int pcmcia_unplug(struct aml_pcmcia *pc)
 		udelay(500);
 		pc->slot_state = MODULE_XTRACTED;
 	}
-	msleep(1);
+	udelay(100);
 	pc->pcmcia_plugin(pc, 0);
 
 	return 0;
@@ -96,35 +93,27 @@ static void aml_pcmcia_work(struct work_struct *work)
 	struct aml_pcmcia *pc = container_of(
 		work, struct aml_pcmcia, pcmcia_work);
 
-	if (pc->start_work == 0) {
-		return;
-	}
 	cd1 = pc->get_cd1(pc);
 	cd2 = pc->get_cd2(pc);
 
 	if (cd1 != cd2)
-		pr_error("work CAM card not inerted.\n");
+		pr_error("CAM card not inerted.\n");
 	else {
 		if (!cd1) {
-			pr_error("work Adapter(%d) Slot(0): CAM Plugin\n", 0);
+			pr_error("Adapter(%d) Slot(0): CAM Plugin\n", 0);
 			pcmcia_plugin(pc);
 		} else {
-			pr_error("work Adapter(%d) Slot(0): CAM Unplug\n", 0);
+			pr_error("Adapter(%d) Slot(0): CAM Unplug\n", 0);
 			pcmcia_unplug(pc);
 		}
 	}
 }
 
-void aml_pcmcia_detect_cam(struct aml_pcmcia *pc)
+static void aml_pcmcia_detect_cam(struct aml_pcmcia *pc)
 {
 	int cd1, cd2;
 
 	if (pc == NULL) {
-		pr_error("pc is null\n");
-		return;
-	}
-	if (pc->start_work == 0) {
-	pr_error("pc start work is 0\n");
 		return;
 	}
 	cd1 = pc->get_cd1(pc);
@@ -142,7 +131,6 @@ void aml_pcmcia_detect_cam(struct aml_pcmcia *pc)
 		}
 	}
 }
-EXPORT_SYMBOL(aml_pcmcia_detect_cam);
 static struct aml_pcmcia *pc_cur;
 
 int aml_pcmcia_init(struct aml_pcmcia *pc)
@@ -152,15 +140,14 @@ int aml_pcmcia_init(struct aml_pcmcia *pc)
 	pr_dbg("aml_pcmcia_init start pc->irq=%d\r\n", pc->irq);
 	pc->rst(pc, AML_L);
 	/*power on*/
-	if (pc->io_device_type != AML_DVB_IO_TYPE_CIBUS)
-		pc->pwr(pc, AML_PWR_OPEN);/*hi is open power*/
+	pc->pwr(pc, AML_PWR_OPEN);/*hi is open power*/
 	/*assuming cam unpluged, config the INT to waiting-for-plugin mode*/
 	pc->init_irq(pc, IRQF_TRIGGER_LOW);
 
 	INIT_WORK(&pc->pcmcia_work, aml_pcmcia_work);
 
 	mode = IRQF_ONESHOT;
-	if (pc->io_device_type == AML_DVB_IO_TYPE_SPI_T312 || pc->io_device_type == AML_DVB_IO_TYPE_CIBUS) {
+	if (pc->io_device_type == AML_DVB_IO_TYPE_SPI_T312) {
 		mode = mode | IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING;
 	}
 
@@ -174,7 +161,7 @@ int aml_pcmcia_init(struct aml_pcmcia *pc)
 
 	pc_cur = pc;
 	pr_dbg("aml_pcmcia_init ok\r\n");
-	if (pc->io_device_type == AML_DVB_IO_TYPE_SPI_T312 || pc->io_device_type == AML_DVB_IO_TYPE_CIBUS) {
+	if (pc->io_device_type == AML_DVB_IO_TYPE_SPI_T312) {
 		//mcu start very fast,so she can detect cam before soc init end.
 		//so we need add detect cam fun for first time.
 		aml_pcmcia_detect_cam(pc);
@@ -192,14 +179,15 @@ EXPORT_SYMBOL(aml_pcmcia_exit);
 
 int aml_pcmcia_reset(struct aml_pcmcia *pc)
 {
-		pr_dbg("CAM RESET-->start\n");
+		pr_dbg("CAM RESET-->\n");
 		/* viaccess neotion cam need delay 2000 and 3000 */
 		/* smit cam need delay 1000 and 1500 */
 		/* need change delay according cam vendor */
 		pc->rst(pc, AML_H);/*HI is reset*/
-		msleep(2000);
+		mdelay(1000);
 		pc->rst(pc, AML_L);/*defaule LOW*/
-		msleep(2500);
+		pr_dbg("CAM RESET--\n");
+		mdelay(1500);
 		pr_dbg("CAM RESET--end\n");
 	return 0;
 }
@@ -253,6 +241,7 @@ static void __exit aml_pcmcia_mod_exit(void)
 
 	class_unregister(&aml_pcmcia_class);
 }
+
 
 
 module_init(aml_pcmcia_mod_init);

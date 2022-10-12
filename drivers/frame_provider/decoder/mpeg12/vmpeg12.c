@@ -29,7 +29,7 @@
 #include <linux/amlogic/media/vfm/vframe.h>
 #include <linux/amlogic/media/vfm/vframe_provider.h>
 #include <linux/amlogic/media/vfm/vframe_receiver.h>
-#include <linux/amlogic/media/registers/cpu_version.h>
+#include <linux/amlogic/cpu_version.h>
 #include <linux/amlogic/media/codec_mm/codec_mm.h>
 #include <linux/dma-mapping.h>
 #include <linux/slab.h>
@@ -41,8 +41,7 @@
 #include "../utils/decoder_bmmu_box.h"
 #include <linux/uaccess.h>
 #include <linux/amlogic/media/codec_mm/configs.h>
-//#include <linux/amlogic/tee.h>
-#include <uapi/linux/tee.h>
+#include "../utils/secprot.h"
 
 
 
@@ -1311,9 +1310,11 @@ static void vmpeg12_set_clk(struct work_struct *work)
 }
 
 
-static void vmpeg_put_timer_func(struct timer_list *timer)
+static void vmpeg_put_timer_func(unsigned long arg)
 {
+	struct timer_list *timer = (struct timer_list *)arg;
 	int fatal_reset = 0;
+
 	enum receviver_start_e state = RECEIVER_INACTIVE;
 
 	if (vf_get_receiver(PROVIDER_NAME)) {
@@ -1764,30 +1765,30 @@ static int vmpeg12_canvas_init(void)
 
 		} else {
 #ifdef NV21
-			config_cav_lut_ex(2 * i + 0,
+			canvas_config(2 * i + 0,
 				buf_start,
 				canvas_width, canvas_height,
-				CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32, 0, VDEC_1);
-			config_cav_lut_ex(2 * i + 1,
+				CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32);
+			canvas_config(2 * i + 1,
 				buf_start +
 				decbuf_y_size, canvas_width,
 				canvas_height / 2, CANVAS_ADDR_NOWRAP,
-				CANVAS_BLKMODE_32X32, 0, VDEC_1);
+				CANVAS_BLKMODE_32X32);
 #else
-			config_cav_lut_ex(3 * i + 0,
+			canvas_config(3 * i + 0,
 				buf_start,
 				canvas_width, canvas_height,
-				CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32, 0, VDEC_1);
-			config_cav_lut_ex(3 * i + 1,
+				CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32);
+			canvas_config(3 * i + 1,
 				buf_start +
 				decbuf_y_size, canvas_width / 2,
 				canvas_height / 2, CANVAS_ADDR_NOWRAP,
-				CANVAS_BLKMODE_32X32, 0, VDEC_1);
-			config_cav_lut_ex(3 * i + 2,
+				CANVAS_BLKMODE_32X32);
+			canvas_config(3 * i + 2,
 				buf_start +
 				decbuf_y_size + decbuf_uv_size,
 				canvas_width / 2, canvas_height / 2,
-				CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32, 0, VDEC_1);
+				CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_32X32);
 #endif
 		}
 	}
@@ -1948,7 +1949,7 @@ static s32 vmpeg12_init(void)
 	if (IS_ERR_OR_NULL(buf))
 		return -ENOMEM;
 
-	timer_setup(&recycle_timer, vmpeg_put_timer_func, 0);
+	init_timer(&recycle_timer);
 
 	stat |= STAT_TIMER_INIT;
 
@@ -1968,7 +1969,7 @@ static s32 vmpeg12_init(void)
 		amvdec_disable();
 		vfree(buf);
 		pr_err("MPEG12: the %s fw loading failed, err: %x\n",
-			tee_enabled() ? "TEE" : "local", ret);
+			vdec_tee_enabled() ? "TEE" : "local", ret);
 		return -EBUSY;
 	}
 
@@ -2013,7 +2014,10 @@ static s32 vmpeg12_init(void)
 
 	stat |= STAT_VF_HOOK;
 
+	recycle_timer.data = (ulong)&recycle_timer;
+	recycle_timer.function = vmpeg_put_timer_func;
 	recycle_timer.expires = jiffies + PUT_INTERVAL;
+
 	add_timer(&recycle_timer);
 
 	stat |= STAT_TIMER_ARM;
@@ -2155,16 +2159,32 @@ static int amvdec_mpeg12_remove(struct platform_device *pdev)
 }
 
 /****************************************/
+#ifdef CONFIG_PM
+static int mpeg12_suspend(struct device *dev)
+{
+	amvdec_suspend(to_platform_device(dev), dev->power.power_state);
+	return 0;
+}
+
+static int mpeg12_resume(struct device *dev)
+{
+	amvdec_resume(to_platform_device(dev));
+	return 0;
+}
+
+static const struct dev_pm_ops mpeg12_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(mpeg12_suspend, mpeg12_resume)
+};
+#endif
 
 static struct platform_driver amvdec_mpeg12_driver = {
 	.probe = amvdec_mpeg12_probe,
 	.remove = amvdec_mpeg12_remove,
-#ifdef CONFIG_PM
-	.suspend = amvdec_suspend,
-	.resume = amvdec_resume,
-#endif
 	.driver = {
 		.name = DRIVER_NAME,
+#ifdef CONFIG_PM
+		.pm = &mpeg12_pm_ops,
+#endif
 	}
 };
 

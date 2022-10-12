@@ -15,6 +15,7 @@
  *
 */
 
+#define LOG_LINE() pr_err("[%s:%d]\n", __FUNCTION__, __LINE__);
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/errno.h>
@@ -47,25 +48,17 @@
 #include <linux/amlogic/media/utils/amports_config.h>
 #include "encoder.h"
 #include "../../../frame_provider/decoder/utils/amvdec.h"
-#include "../../../common/chips/decoder_cpu_ver_info.h"
-#include "../../../frame_provider/decoder/utils/vdec.h"
 #include "../../../frame_provider/decoder/utils/vdec_power_ctrl.h"
 #include <linux/amlogic/media/utils/vdec_reg.h>
 #include <linux/amlogic/power_ctrl.h>
 #include <dt-bindings/power/sc2-pd.h>
-#include <linux/amlogic/power_domain.h>
-#include <linux/amlogic/power_ctrl.h>
+#include <linux/amlogic/pwr_ctrl.h>
 
 #include <linux/amlogic/media/utils/amlog.h>
 #include "../../../stream_input/amports/amports_priv.h"
 #include "../../../frame_provider/decoder/utils/firmware.h"
 #include <linux/of_reserved_mem.h>
-#include <linux/version.h>
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,1)
-#include <uapi/linux/sched/types.h>
-#include <linux/sched/signal.h>
-#endif
 
 #ifdef CONFIG_AM_JPEG_ENCODER
 #include "jpegenc.h"
@@ -770,6 +763,7 @@ static void avc_canvas_init(struct encode_wq_s *wq)
 {
 	u32 canvas_width, canvas_height;
 	u32 start_addr = wq->mem.buf_start;
+
 	canvas_width = ((wq->pic.encoder_width + 31) >> 5) << 5;
 	canvas_height = ((wq->pic.encoder_height + 15) >> 4) << 4;
 
@@ -786,6 +780,7 @@ static void avc_canvas_init(struct encode_wq_s *wq)
 	      start_addr + wq->mem.bufspec.dec0_uv.buf_start,
 	      canvas_width, canvas_height / 2,
 	      CANVAS_ADDR_NOWRAP, CANVAS_BLKMODE_LINEAR);
+
 	canvas_config(3 + ENC_CANVAS_OFFSET,
 	      start_addr + wq->mem.bufspec.dec1_y.buf_start,
 	      canvas_width, canvas_height,
@@ -1090,6 +1085,7 @@ static void mfdin_basic(u32 input, u8 iformat,
 			(interp_en << 9) | (r2y_en << 12) |
 			(r2y_mode << 13) | (ifmt_extra << 16) |
 			(nr_enable << 19));
+
 		if (get_cpu_type() >= MESON_CPU_MAJOR_ID_SC2) {
 			WRITE_HREG((HCODEC_MFDIN_REG8_DMBL + reg_offset),
 				(picsize_x << 16) | (picsize_y << 0));
@@ -1162,7 +1158,7 @@ static int scale_frame(struct encode_wq_s *wq,
 	src_left = request->crop_left;
 	src_width = request->src_w - src_left - request->crop_right;
 	src_height = request->src_h - src_top - request->crop_bottom;
-	enc_pr(LOG_INFO, "request->fmt=%d, %d %d, canvas=%d\n", request->fmt, FMT_NV21, FMT_BGR888, canvas);
+	pr_err("request->fmt=%d, %d %d, canvas=%d\n", request->fmt, FMT_NV21, FMT_BGR888, canvas);
 
 	if (canvas) {
 		if ((request->fmt == FMT_NV21)
@@ -1397,6 +1393,7 @@ static s32 set_input_format(struct encode_wq_s *wq,
 			src_addr = input;
 			picsize_y = wq->pic.encoder_height;
 		}
+
 		if (request->scale_enable) {
 #ifdef CONFIG_AMLOGIC_MEDIA_GE2D
 			struct config_para_ex_s ge2d_config;
@@ -2473,6 +2470,7 @@ void amvenc_stop(void)
 
 	WRITE_HREG(HCODEC_MPSR, 0);
 	WRITE_HREG(HCODEC_CPSR, 0);
+
 	while (READ_HREG(HCODEC_IMEM_DMA_CTRL) & 0x8000) {
 		if (time_after(jiffies, timeout))
 			break;
@@ -2632,16 +2630,20 @@ static s32 avc_poweron(u32 clock)
 	u32 data32;
 
 	data32 = 0;
+
 	amports_switch_gate("vdec", 1);
+
 	spin_lock_irqsave(&lock, flags);
+
 	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_SC2) {
 		hcodec_clk_config(1);
 		udelay(20);
-		pwr_ctrl_psci_smc(PDID_SC2_DOS_HCODEC, PWR_ON);
+
+		pwr_ctrl_psci_smc(PDID_DOS_HCODEC, PWR_ON);
 		udelay(20);
 		pr_err("hcodec powered on, hcodec clk rate:%ld, pwr_state:%d\n",
 			clk_get_rate(s_hcodec_clks.hcodec_aclk),
-			!pwr_ctrl_status_psci_smc(PDID_SC2_DOS_HCODEC));
+			!pwr_ctrl_status_psci_smc(PDID_DOS_HCODEC));
 	} else {
 		WRITE_AOREG(AO_RTI_PWR_CNTL_REG0,
 			(READ_AOREG(AO_RTI_PWR_CNTL_REG0) & (~0x18)));
@@ -2656,6 +2658,7 @@ static s32 avc_poweron(u32 clock)
 
 		udelay(10);
 	}
+
 	WRITE_VREG(DOS_SW_RESET1, 0xffffffff);
 	WRITE_VREG(DOS_SW_RESET1, 0);
 
@@ -2666,6 +2669,7 @@ static s32 avc_poweron(u32 clock)
 	WRITE_VREG(DOS_MEM_PD_HCODEC, 0x0);
 
 	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_SC2) {
+
 	} else  {
 		/* Remove HCODEC ISO */
 		WRITE_AOREG(AO_RTI_GEN_PWR_ISO0,
@@ -2674,6 +2678,7 @@ static s32 avc_poweron(u32 clock)
 				  get_cpu_type() >= MESON_CPU_MAJOR_ID_TM2)
 				? ~0x1 : ~0x30));
 	}
+
 	udelay(10);
 	/* Disable auto-clock gate */
 	WRITE_VREG(DOS_GEN_CTRL0,
@@ -2682,6 +2687,7 @@ static s32 avc_poweron(u32 clock)
 		(READ_VREG(DOS_GEN_CTRL0) & 0xFFFFFFFE));
 
 	spin_unlock_irqrestore(&lock, flags);
+
 	mdelay(10);
 	return 0;
 }
@@ -2695,7 +2701,7 @@ static s32 avc_poweroff(void)
 	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_SC2) {
 		hcodec_clk_config(0);
 		udelay(20);
-		pwr_ctrl_psci_smc(PDID_SC2_DOS_HCODEC, PWR_OFF);
+		pwr_ctrl_psci_smc(PDID_DOS_HCODEC, PWR_OFF);
 		udelay(20);
 	} else {
 		/* enable HCODEC isolation */
@@ -2845,7 +2851,11 @@ static s32 convert_request(struct encode_wq_s *wq, u32 *cmd_info)
 		      wq->pic.encoder_height, wq->request.fmt);
 
 		if (wq->pic.encoder_width >= 1280 && wq->pic.encoder_height >= 720
-			&& wq->request.fmt == FMT_RGBA8888 && wq->pic.color_space != GE2D_FORMAT_BT601) {
+			&& wq->request.fmt == FMT_RGBA8888
+#ifdef CONFIG_AMLOGIC_MEDIA_GE2D
+			&& wq->pic.color_space != GE2D_FORMAT_BT601
+#endif
+			) {
 			wq->request.scale_enable = 1;
 			wq->request.src_w = wq->pic.encoder_width;
 			wq->request.src_h = wq->pic.encoder_height;
@@ -3140,6 +3150,7 @@ s32 amvenc_avc_start(struct encode_wq_s *wq, u32 clock)
 
 	if (amvenc_loadmc(p, wq) < 0)
 		return -EBUSY;
+
 	encode_manager.need_reset = true;
 	encode_manager.process_irq = false;
 	encode_manager.encode_hw_status = ENCODER_IDLE;
@@ -3150,6 +3161,7 @@ s32 amvenc_avc_start(struct encode_wq_s *wq, u32 clock)
 
 	ie_me_mode = (0 & ME_PIXEL_MODE_MASK) << ME_PIXEL_MODE_SHIFT;
 	avc_prot_init(wq, NULL, wq->pic.init_qppicture, true);
+
 	if (request_irq(encode_manager.irq_num, enc_isr, IRQF_SHARED,
 		"enc-irq", (void *)&encode_manager) == 0)
 		encode_manager.irq_requested = true;
@@ -3405,21 +3417,17 @@ static long amvenc_avc_ioctl(struct file *file, u32 cmd, ulong arg)
 				wq->mem.bufspec.max_height, (void *)wq);
 			return -1;
 		}
-
+		pr_err("hwenc: AMVENC_AVC_IOC_CONFIG_INIT: w:%d, h:%d\n", wq->pic.encoder_width, wq->pic.encoder_height);
 		wq->pic.encoder_width = addr_info[2];
 		wq->pic.encoder_height = addr_info[3];
-		pr_err("hwenc: AMVENC_AVC_IOC_CONFIG_INIT: w:%d, h:%d\n", wq->pic.encoder_width, wq->pic.encoder_height);
 
 		wq->pic.color_space = addr_info[4];
 		pr_err("hwenc: AMVENC_AVC_IOC_CONFIG_INIT, wq->pic.color_space=%#x\n", wq->pic.color_space);
-
-		/*
 		if (wq->pic.encoder_width *
 			wq->pic.encoder_height >= 1280 * 720)
 			clock_level = 6;
 		else
 			clock_level = 5;
-		*/
 		avc_buffspec_init(wq);
 		complete(&encode_manager.event.request_in_com);
 		addr_info[1] = wq->mem.bufspec.dct.buf_start;
@@ -3613,6 +3621,7 @@ static u32 amvenc_avc_poll(struct file *file, poll_table *wait_table)
 		atomic_dec(&wq->request_ready);
 		return POLLIN | POLLRDNORM;
 	}
+
 	return 0;
 }
 
@@ -3635,8 +3644,10 @@ static s32 encode_process_request(struct encode_manager_s *manager,
 	s32 ret = 0;
 	struct encode_wq_s *wq = pitem->request.parent;
 	struct encode_request_s *request = &pitem->request;
+
 	u32 timeout = (request->timeout == 0) ?
 		1 : msecs_to_jiffies(request->timeout);
+
 	u32 buf_start = 0;
 	u32 size = 0;
 	u32 flush_size = ((wq->pic.encoder_width + 31) >> 5 << 5) *
@@ -3812,11 +3823,9 @@ s32 encode_wq_add_request(struct encode_wq_s *wq)
 		pitem->request.cmd, pitem->request.ucode_mode,
 		(void *)wq);
 	complete(&encode_manager.event.request_in_com);/* new cmd come in */
-
 	return 0;
 error:
 	spin_unlock(&encode_manager.event.sem_lock);
-
 	return -1;
 }
 
@@ -4324,7 +4333,7 @@ static ssize_t encode_status_show(struct class *cla,
 	}
 	return snprintf(buf, 40, "encode max instance: %d\n", max_instance);
 }
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(4,13,1)
+
 static struct class_attribute amvenc_class_attrs[] = {
 	__ATTR(encode_status,
 	S_IRUGO | S_IWUSR,
@@ -4337,21 +4346,7 @@ static struct class amvenc_avc_class = {
 	.name = CLASS_NAME,
 	.class_attrs = amvenc_class_attrs,
 };
-#else /* LINUX_VERSION_CODE <= KERNEL_VERSION(4,13,1)  */
-static CLASS_ATTR_RO(encode_status);
 
-static struct attribute *amvenc_avc_class_attrs[] = {
-	&class_attr_encode_status.attr,
-	NULL
-};
-
-ATTRIBUTE_GROUPS(amvenc_avc_class);
-
-static struct class amvenc_avc_class = {
-	.name = CLASS_NAME,
-	.class_groups = amvenc_avc_class_groups,
-};
-#endif /* LINUX_VERSION_CODE <= KERNEL_VERSION(4,13,1)  */
 s32 init_avc_device(void)
 {
 	s32  r = 0;
@@ -4470,7 +4465,7 @@ static s32 amvenc_avc_probe(struct platform_device *pdev)
 	s32 idx;
 	s32 r;
 
-	enc_pr(LOG_INFO, "amvenc_avc probe start.\n");
+	enc_pr(LOG_ERROR, "amvenc_avc probe start.\n");
 
 	encode_manager.this_pdev = pdev;
 #ifdef CONFIG_CMA
@@ -4567,20 +4562,13 @@ static struct platform_driver amvenc_avc_driver = {
 	}
 };
 
-/*
 static struct codec_profile_t amvenc_avc_profile = {
 	.name = "avc",
 	.profile = ""
 };
-*/
 
 static s32 __init amvenc_avc_driver_init_module(void)
 {
-	if (get_cpu_major_id() == AM_MESON_CPU_MAJOR_ID_T7) {
-		pr_err("T7 doesn't support hcodec avc encoder!!\n");
-		return -1;
-	}
-
 	enc_pr(LOG_INFO, "amvenc_avc module init\n");
 
 	if (platform_driver_register(&amvenc_avc_driver)) {
@@ -4588,7 +4576,7 @@ static s32 __init amvenc_avc_driver_init_module(void)
 			"failed to register amvenc_avc driver\n");
 		return -ENODEV;
 	}
-	//vcodec_profile_register(&amvenc_avc_profile);
+	vcodec_profile_register(&amvenc_avc_profile);
 	return 0;
 }
 
